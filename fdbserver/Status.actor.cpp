@@ -2434,6 +2434,8 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 	int minFaultTolerance = 1000;
 	int localSetsWithNonNegativeFaultTolerance = 0;
 
+	std::string sets;
+
 	for (const auto& tLogSet : tLogs) {
 		if (tLogSet.tLogs.size() == 0) {
 			// We can have LogSets where there are no tLogs but some LogRouters. It's the way
@@ -2441,7 +2443,8 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 			// it adds an empty LogSet for missing locality.
 			continue;
 		}
-
+		sets += tLogSet.toString() + "\n";
+		
 		int failedLogs = 0;
 		for (auto& log : tLogSet.tLogs) {
 			JsonBuilderObject logObj;
@@ -2490,10 +2493,11 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 		// just in case we do not have any tlog sets
 		minFaultTolerance = 0;
 	}
-	if (localSetsWithNonNegativeFaultTolerance > 1) {
+	if (localSetsWithNonNegativeFaultTolerance > 0) {
 		minFaultTolerance++;
 	}
 	*logFaultTolerance = std::min(*logFaultTolerance, minFaultTolerance);
+	JsonBuilderObject jb;	jb["jopa"] = sets;	logsObj.push_back(jb);
 	statusObj["log_interfaces"] = logsObj;
 	// We may lose logs in this log generation, storage servers may never be able to catch up this log
 	// generation.
