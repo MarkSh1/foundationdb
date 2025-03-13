@@ -2642,7 +2642,7 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 		// just in case we do not have any tlog sets
 		minFaultTolerance = 0;
 	}
-	if (localSetsWithNonNegativeFaultTolerance > 1) {
+	if (localSetsWithNonNegativeFaultTolerance > 0) {
 		minFaultTolerance++;
 	}
 	*logFaultTolerance = std::min(*logFaultTolerance, minFaultTolerance);
