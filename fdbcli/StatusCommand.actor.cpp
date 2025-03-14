@@ -721,7 +721,10 @@ void printStatus(StatusObjectReader statusObj,
 											if (logInterface.get("healthy", healthy) && !healthy) {
 												logInterface.get("id", id);
 												logInterface.get("address", address);
-												missing_log_interfaces += format("%s,%s ", id.c_str(), address.c_str());
+												missing_log_interfaces +=
+												    format("%s,%s ",
+												           id.c_str(),
+												           address.empty() ? "unknown" : address.c_str());
 											}
 										}
 									}

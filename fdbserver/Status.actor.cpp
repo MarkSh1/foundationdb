@@ -2583,8 +2583,6 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 	    log_replication_factor, log_write_anti_quorum, log_fault_tolerance, remote_log_replication_factor,
 	    remote_log_fault_tolerance;
 
-	std::optional<int> FaultTolerance, FaultToleranceSat;
-
 	for (const auto& tLogSet : tLogs) {
 		if (tLogSet.tLogs.size() == 0) {
 			// We can have LogSets where there are no tLogs but some LogRouters. It's the way
@@ -2608,14 +2606,6 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 			}
 		}
 
-		if (tLogSet.isLocal) {
-			ASSERT_WE_THINK(tLogSet.tLogReplicationFactor > 0);
-			int currentFaultTolerance = tLogSet.tLogReplicationFactor - 1 - tLogSet.tLogWriteAntiQuorum - failedLogs;
-
-			tLogSet.locality == tagLocalitySatellite ? FaultToleranceSat = currentFaultTolerance
-			                                         : FaultTolerance = currentFaultTolerance;
-		}
-
 		if (tLogSet.isLocal && tLogSet.locality == tagLocalitySatellite) {
 			sat_log_replication_factor = tLogSet.tLogReplicationFactor;
 			sat_log_write_anti_quorum = tLogSet.tLogWriteAntiQuorum;
@@ -2630,16 +2620,14 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 		}
 	}
 	
-	FaultTolerance = FaultTolerance.value_or(0);
-	FaultToleranceSat = FaultToleranceSat.value_or(0);
-	
-	FaultTolerance = std::max(*FaultTolerance, *FaultToleranceSat);
-	*logFaultTolerance = std::min(*logFaultTolerance, *FaultTolerance);
+	int faultTolerance = std::max(log_fault_tolerance.present() ? log_fault_tolerance.get() : 0, sat_log_fault_tolerance.present() ? sat_log_fault_tolerance.get() : -1);
+
+	*logFaultTolerance = std::min(*logFaultTolerance, faultTolerance);
 	statusObj["log_interfaces"] = logsObj;
 
 	// We may lose logs in this log generation, storage servers may never be able to catch up this log
 	// generation.
-	statusObj["possibly_losing_data"] = *FaultTolerance < 0;
+	statusObj["possibly_losing_data"] = faultTolerance < 0;
 
 	if (sat_log_replication_factor.present())
 		statusObj["satellite_log_replication_factor"] = sat_log_replication_factor.get();
