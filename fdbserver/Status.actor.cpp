@@ -2583,6 +2583,9 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 	    log_replication_factor, log_write_anti_quorum, log_fault_tolerance, remote_log_replication_factor,
 	    remote_log_fault_tolerance;
 
+	int minFaultTolerance = 1000;
+	int localSetsWithNonNegativeFaultTolerance = 0;
+
 	for (const auto& tLogSet : tLogs) {
 		if (tLogSet.tLogs.size() == 0) {
 			// We can have LogSets where there are no tLogs but some LogRouters. It's the way
@@ -2590,7 +2593,7 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 			// it adds an empty LogSet for missing locality.
 			continue;
 		}
-		
+
 		int failedLogs = 0;
 		for (auto& log : tLogSet.tLogs) {
 			JsonBuilderObject logObj;
@@ -2603,6 +2606,22 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 			logsObj.push_back(logObj);
 			if (failed) {
 				failedLogs++;
+			}
+		}
+
+		if (tLogSet.isLocal) {
+			ASSERT_WE_THINK(tLogSet.tLogReplicationFactor > 0);
+			int currentFaultTolerance = tLogSet.tLogReplicationFactor - 1 - tLogSet.tLogWriteAntiQuorum - failedLogs;
+			if (currentFaultTolerance >= 0) {
+				localSetsWithNonNegativeFaultTolerance++;
+			}
+
+			if (tLogSet.locality == tagLocalitySatellite) {
+				// FIXME: This hack to bump satellite fault tolerance, is to make it consistent
+				//  with 6.2.
+				minFaultTolerance = std::min(minFaultTolerance, currentFaultTolerance + 1);
+			} else {
+				minFaultTolerance = std::min(minFaultTolerance, currentFaultTolerance);
 			}
 		}
 
@@ -2619,15 +2638,18 @@ static JsonBuilderObject tlogFetcher(int* logFaultTolerance,
 			remote_log_fault_tolerance = tLogSet.tLogReplicationFactor - 1 - failedLogs;
 		}
 	}
-	
-	int faultTolerance = std::max(log_fault_tolerance.present() ? log_fault_tolerance.get() : 0, sat_log_fault_tolerance.present() ? sat_log_fault_tolerance.get() : -1);
-
-	*logFaultTolerance = std::min(*logFaultTolerance, faultTolerance);
+	if (minFaultTolerance == 1000) {
+		// just in case we do not have any tlog sets
+		minFaultTolerance = 0;
+	}
+	if (localSetsWithNonNegativeFaultTolerance > 1) {
+		minFaultTolerance++;
+	}
+	*logFaultTolerance = std::min(*logFaultTolerance, minFaultTolerance);
 	statusObj["log_interfaces"] = logsObj;
-
 	// We may lose logs in this log generation, storage servers may never be able to catch up this log
 	// generation.
-	statusObj["possibly_losing_data"] = faultTolerance < 0;
+	statusObj["possibly_losing_data"] = minFaultTolerance < 0;
 
 	if (sat_log_replication_factor.present())
 		statusObj["satellite_log_replication_factor"] = sat_log_replication_factor.get();
