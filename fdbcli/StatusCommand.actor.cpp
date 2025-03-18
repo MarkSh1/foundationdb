@@ -695,7 +695,7 @@ void printStatus(StatusObjectReader statusObj,
 						if (dataLoss == -1) {
 							ASSERT_WE_THINK(availLoss == -1);
 							outputString += format(
-							    "\n\n  Please restart "
+							    "\n\n  Warning: the database may have data loss and availability loss. Please restart "
 							    "following tlog interfaces, otherwise storage servers may never be able to catch "
 							    "up.\n");
 							StatusObjectReader logs;

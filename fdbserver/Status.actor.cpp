@@ -2689,8 +2689,9 @@ static JsonBuilderArray tlogFetcher(int* logFaultTolerance,
 	tlogsArray.push_back(tlogsStatus);
 
 	// fetch all the old generations of TLogs.
+	int logFaultToleranceOld = 100;
 	for (auto it : db->get().logSystemConfig.oldTLogs) {
-		JsonBuilderObject oldTlogsStatus = tlogFetcher(logFaultTolerance, it.tLogs, address_workers);
+		JsonBuilderObject oldTlogsStatus = tlogFetcher(&logFaultToleranceOld, it.tLogs, address_workers);
 		oldTlogsStatus["epoch"] = it.epoch;
 		oldTlogsStatus["current"] = false;
 		oldTlogsStatus["begin_version"] = it.epochBegin;
