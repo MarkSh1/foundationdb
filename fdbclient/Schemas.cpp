@@ -173,6 +173,7 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                      "throttled_commits":12341234,
                      "write_stall_microseconds":12341234
                   },
+                  "rocksdb_version":"9.7.3",
                   "data_version":12341234,
                   "durable_version":12341234,
                   "data_lag": {
@@ -280,102 +281,6 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                      "p99.9":0.0
                   },
                   "commit_batching_window_size":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_batch_transactions":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_batch_bytes":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_batching_waiting":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_preresolution_latency":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_resolution_latency":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_postresolution_latency":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_tlog_logging_latency":{
-                     "count":0,
-                     "min":0.0,
-                     "max":0.0,
-                     "median":0.0,
-                     "mean":0.0,
-                     "p25":0.0,
-                     "p90":0.0,
-                     "p95":0.0,
-                     "p99":0.0,
-                     "p99.9":0.0
-                  },
-                  "commit_reply_latency":{
                      "count":0,
                      "min":0.0,
                      "max":0.0,
@@ -623,6 +528,14 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
          "lock_uid": "00000000000000000000000000000000"
       },
       "generation":2,
+      "gray_failure" : {
+         "excluded_servers" : [
+            {
+               "address": "127.0.0.1:4500",
+               "time": 1731294251
+            }
+         ]
+      },
       "latency_probe":{
          "read_seconds":7,
          "immediate_priority_transaction_start_seconds":0.0,
