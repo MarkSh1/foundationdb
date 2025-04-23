@@ -31,7 +31,8 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libjemalloc-dev \
   liblz4-dev \
-  libssl-dev
+  libssl-dev \
+  libz-dev
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libmono-system-data-datasetextensions4.0-cil \
