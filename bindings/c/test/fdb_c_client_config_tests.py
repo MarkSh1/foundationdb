@@ -742,7 +742,7 @@ class ClientTracingTests(unittest.TestCase):
             else:
                 pattern += "\d+"
             if version is not None:
-                pattern += "_v{}-?\d*".format(version.replace(".", "_"))
+                pattern += "_v{}.*".format(version.replace(".", "_"))
             if thread_idx is not None:
                 pattern += "t{}".format(thread_idx)
             pattern += "\.\d+\.\w+\.\d+\.\d+\.{}$".format(self.test.trace_format)
