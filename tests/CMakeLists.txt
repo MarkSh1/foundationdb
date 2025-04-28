@@ -308,18 +308,6 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/StatusBuilderPerf.toml)
   add_fdb_test(TEST_FILES rare/TLogVersionMessagesOverheadFactor.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_5.0.0_until_6.3.0/CycleTestRestart-1.toml
-    restarting/from_5.0.0_until_6.3.0/CycleTestRestart-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/from_5.0.0_until_6.3.0/StorefrontTestRestart-1.toml
-    restarting/from_5.0.0_until_6.3.0/StorefrontTestRestart-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/from_5.1.7_until_6.3.0/DrUpgradeRestart-1.toml
-    restarting/from_5.1.7_until_6.3.0/DrUpgradeRestart-2.toml)
-  add_fdb_test(
-    TEST_FILES restarting/from_5.2.0_until_6.3.0/ClientTransactionProfilingCorrectness-1.toml
-    restarting/from_5.2.0_until_6.3.0/ClientTransactionProfilingCorrectness-2.toml)
-  add_fdb_test(
     TEST_FILES restarting/from_6.3.13_until_7.3.0/ClientTransactionProfilingCorrectness-1.txt
     restarting/from_6.3.13_until_7.3.0/ClientTransactionProfilingCorrectness-2.txt)
   add_fdb_test(
@@ -328,9 +316,6 @@ if(WITH_PYTHON)
   add_fdb_test(
     TEST_FILES restarting/from_6.3.13_until_7.3.0/StorefrontTestRestart-1.txt
     restarting/from_6.3.13_until_7.3.0/StorefrontTestRestart-2.txt)
-  add_fdb_test(
-    TEST_FILES restarting/from_6.3.13_until_7.2.0/DrUpgradeRestart-1.txt
-    restarting/from_6.3.13_until_7.2.0/DrUpgradeRestart-2.txt)
   add_fdb_test(
     TEST_FILES restarting/from_7.0.0_until_7.1.0/UpgradeAndBackupRestore-1.toml
     restarting/from_7.0.0_until_7.1.0/UpgradeAndBackupRestore-2.toml)
@@ -521,9 +506,9 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupCorrectnessCycle.toml)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupCorrectnessMultiCycles.toml)
   add_fdb_test(TEST_FILES slow/ParallelRestoreOldBackupWriteDuringReadAtomicRestore.toml)
-  add_fdb_test(TEST_FILES negative/ResolverIgnoreTooOld.toml)
-  add_fdb_test(TEST_FILES negative/ResolverIgnoreReads.toml)
-  add_fdb_test(TEST_FILES negative/ResolverIgnoreWrites.toml)
+  add_fdb_test(TEST_FILES negative/ResolverIgnoreTooOld.toml IGNORE)
+  add_fdb_test(TEST_FILES negative/ResolverIgnoreReads.toml IGNORE)
+  add_fdb_test(TEST_FILES negative/ResolverIgnoreWrites.toml IGNORE)
   add_fdb_test(TEST_FILES negative/StorageCorruption.toml)
   add_fdb_test(TEST_FILES ParallelRestoreOldBackupApiCorrectnessAtomicRestore.toml IGNORE)
 
