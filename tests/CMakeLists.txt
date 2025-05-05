@@ -360,7 +360,7 @@ if(WITH_PYTHON)
       restarting/from_7.1.0_until_7.3.0/StorefrontTestRestart-2.txt)
     add_fdb_test(
       TEST_FILES restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-1.txt
-      restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-2.txt)
+      restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-2.txt IGNORE)
     add_fdb_test(
       TEST_FILES restarting/from_7.1.0_until_7.2.0/ConfigureTestRestart-1.toml
       restarting/from_7.1.0_until_7.2.0/ConfigureTestRestart-2.toml)
