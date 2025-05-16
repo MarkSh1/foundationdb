@@ -50,9 +50,8 @@ jobs:
             prepare: "debian-based"
             build_on: linux
             parallel: 5
-            image: foundationdb-build:7.3.0-1.ow.build
-            owner: owtech
-
+            image: foundationdb-build:7.3.63-1.ow.build
+            owner: ${GITHUB_REPOSITORY_OWNER@L}
     runs-on: ${{ matrix.run_on }}
     steps:
       - name: Checkout
@@ -181,6 +180,11 @@ jobs:
       JOSHUA_AGENT_TAG: "rhel8-20220816"
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: ${{github.workspace}}/src
+
       - name: Install dependencies
         shell: bash
         run: |
@@ -234,5 +238,4 @@ jobs:
         working-directory: ${{github.workspace}}/fdb-joshua
         run: |
           podman ps
-          python3 -m joshua.joshua start --tarball ${{github.workspace}}/correctness-${{needs.calc_ver.outputs.full_ver}}.tar.gz --max-runs ${{ env.N_OF_TESTS }} && \
-            python3 -m joshua.joshua tail
+          ${{github.workspace}}/src/build-scripts/for-linux/test-joshua.bash ${{github.workspace}}/correctness-${{needs.calc_ver.outputs.full_ver}}.tar.gz ${{env.N_OF_TESTS}}
