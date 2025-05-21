@@ -185,17 +185,10 @@ if(WITH_PYTHON)
   add_fdb_test(TEST_FILES rare/ChangeFeedOperations.toml)
   add_fdb_test(TEST_FILES rare/ChangeFeedOperationsMove.toml)
   add_fdb_test(TEST_FILES fast/DataLossRecovery.toml)
-  if(WITH_TLS)
-    add_fdb_test(TEST_FILES fast/EncryptionOps.toml)
-    # EncryptionUnitTests is only a convenience file to run the different types of encryption tests at once. Do not enable in general ensembles
-    add_fdb_test(TEST_FILES fast/EncryptionUnitTests.toml IGNORE)
-    add_fdb_test(TEST_FILES fast/EncryptKeyProxyTest.toml)
-  else()
-    add_fdb_test(TEST_FILES fast/EncryptionOps.toml IGNORE)
-    add_fdb_test(TEST_FILES fast/EncryptionUnitTests.toml IGNORE)
-    add_fdb_test(TEST_FILES fast/EncryptKeyProxyTest.toml IGNORE)
-  endif()    
-  
+  add_fdb_test(TEST_FILES fast/EncryptionOps.toml)
+  # EncryptionUnitTests is only a convenience file to run the different types of encryption tests at once. Do not enable in general ensembles
+  add_fdb_test(TEST_FILES fast/EncryptionUnitTests.toml IGNORE)
+  add_fdb_test(TEST_FILES fast/EncryptKeyProxyTest.toml)
   add_fdb_test(TEST_FILES fast/FuzzApiCorrectness.toml)
   add_fdb_test(TEST_FILES fast/FuzzApiCorrectnessClean.toml)
   add_fdb_test(TEST_FILES fast/HTTPKeyValueStore.toml)
@@ -360,7 +353,7 @@ if(WITH_PYTHON)
       restarting/from_7.1.0_until_7.3.0/StorefrontTestRestart-2.txt)
     add_fdb_test(
       TEST_FILES restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-1.txt
-      restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-2.txt IGNORE)
+      restarting/from_7.1.0_until_7.2.0/DrUpgradeRestart-2.txt)
     add_fdb_test(
       TEST_FILES restarting/from_7.1.0_until_7.2.0/ConfigureTestRestart-1.toml
       restarting/from_7.1.0_until_7.2.0/ConfigureTestRestart-2.toml)

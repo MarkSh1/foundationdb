@@ -130,7 +130,7 @@ DataMovementReason priorityToDataMovementReason(int priority) {
 RelocateData::RelocateData()
   : priority(-1), boundaryPriority(-1), healthPriority(-1), reason(RelocateReason::OTHER), startTime(-1),
     dataMoveId(anonymousShardId), workFactor(0), wantsNewServers(false), cancellable(false),
-    interval("QueuedRelocation"){};
+    interval("QueuedRelocation") {};
 
 RelocateData::RelocateData(RelocateShard const& rs)
   : parent_range(rs.getParentRange()), keys(rs.keys), priority(rs.priority),
@@ -216,7 +216,7 @@ class ParallelTCInfo final : public ReferenceCounted<ParallelTCInfo>, public IDa
 
 public:
 	ParallelTCInfo() = default;
-	explicit ParallelTCInfo(ParallelTCInfo const& info) : teams(info.teams), tempServerIDs(info.tempServerIDs){};
+	explicit ParallelTCInfo(ParallelTCInfo const& info) : teams(info.teams), tempServerIDs(info.tempServerIDs) {};
 
 	void addTeam(Reference<IDataDistributionTeam> team) { teams.push_back(team); }
 
@@ -299,6 +299,20 @@ public:
 			maxQueueSize = std::max(maxQueueSize, queueSize.get());
 		}
 		return maxQueueSize;
+	}
+
+	Optional<int> getMaxOngoingBulkLoadTaskCount() const override {
+		int maxOngoingBulkLoadTaskCount = 0;
+		for (const auto& team : teams) {
+			Optional<int> ongoingBulkLoadTaskCount = team->getMaxOngoingBulkLoadTaskCount();
+			if (!ongoingBulkLoadTaskCount.present()) {
+				// If a SS tracker cannot get the metrics from the SS, it is possible that this SS has some healthy
+				// issue. So, return an empty result to avoid choosing this server.
+				return Optional<int>();
+			}
+			maxOngoingBulkLoadTaskCount = std::max(maxOngoingBulkLoadTaskCount, ongoingBulkLoadTaskCount.get());
+		}
+		return maxOngoingBulkLoadTaskCount;
 	}
 
 	int64_t getMinAvailableSpace(bool includeInFlight = true) const override {
@@ -1867,6 +1881,9 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 				// once we've found healthy candidate teams, make sure they're not overloaded with outstanding moves
 				// already
 				anyDestOverloaded = !canLaunchDest(bestTeams, rd.priority, self->destBusymap);
+				if (doBulkLoading) {
+					anyDestOverloaded = false;
+				}
 
 				if (foundTeams && anyHealthy && !anyDestOverloaded) {
 					ASSERT(rd.completeDests.empty());
@@ -2070,7 +2087,16 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 			healthyDestinations.addDataInFlightToTeam(+metrics.bytes);
 			healthyDestinations.addReadInFlightToTeam(+metrics.readLoadKSecond());
 
+			// At this point, we are about to launch the data move, so we should update the busy map counter
+			// for destination servers.
 			launchDest(rd, bestTeams, self->destBusymap);
+			if (doBulkLoading) {
+				for (const auto& [team, _] : bestTeams) {
+					for (const UID& ssid : team->getServerIDs()) {
+						self->bulkLoadTaskCollection->busyMap.addTask(ssid);
+					}
+				}
+			}
 
 			TraceEvent ev(relocateShardInterval.severity, "RelocateShardHasDestination", distributorId);
 			RelocateDecision decision{ rd, destIds, extraIds, metrics, parentMetrics };
@@ -2279,6 +2305,11 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 					}
 
 					if (doBulkLoading) {
+						for (const auto& [team, _] : bestTeams) {
+							for (const UID& ssid : team->getServerIDs()) {
+								self->bulkLoadTaskCollection->busyMap.removeTask(ssid);
+							}
+						}
 						try {
 							self->bulkLoadTaskCollection->terminateTask(rd.bulkLoadTask.get().coreState);
 							TraceEvent(
@@ -2306,6 +2337,11 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 						    .errorUnsuppressed(error)
 						    .detail("JobID", rd.bulkLoadTask.get().coreState.getJobId())
 						    .detail("TaskID", rd.bulkLoadTask.get().coreState.getTaskId());
+						for (const auto& [team, _] : bestTeams) {
+							for (const UID& ssid : team->getServerIDs()) {
+								self->bulkLoadTaskCollection->busyMap.removeTask(ssid);
+							}
+						}
 					}
 					throw error;
 				}
@@ -2324,6 +2360,18 @@ ACTOR Future<Void> dataDistributionRelocator(DDQueue* self,
 					completeDest(rd, self->destBusymap);
 				}
 				rd.completeDests.clear();
+
+				if (doBulkLoading) {
+					TraceEvent(bulkLoadVerboseEventSev(), "DDBulkLoadTaskRelocatorError")
+					    .errorUnsuppressed(error)
+					    .detail("JobID", rd.bulkLoadTask.get().coreState.getJobId())
+					    .detail("TaskID", rd.bulkLoadTask.get().coreState.getTaskId());
+					for (const auto& [team, _] : bestTeams) {
+						for (const UID& ssid : team->getServerIDs()) {
+							self->bulkLoadTaskCollection->busyMap.removeTask(ssid);
+						}
+					}
+				}
 
 				wait(delay(SERVER_KNOBS->RETRY_RELOCATESHARD_DELAY, TaskPriority::DataDistributionLaunch));
 			}
