@@ -61,6 +61,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <fstream>
 
 #endif // WITH_ROCKSDB
 
@@ -165,10 +166,14 @@ rocksdb::ColumnFamilyOptions SharedRocksDBState::initialCfOptions() {
 		options.disable_auto_compactions = SERVER_KNOBS->ROCKSDB_DISABLE_AUTO_COMPACTIONS;
 	}
 	if (SERVER_KNOBS->ROCKSDB_PERIODIC_COMPACTION_SECONDS > 0) {
-		options.periodic_compaction_seconds = SERVER_KNOBS->ROCKSDB_PERIODIC_COMPACTION_SECONDS;
+		// Adding two days range of jitter.
+		int64_t jitter = 2 * 24 * 60 * 60 * deterministicRandom()->random01();
+		options.periodic_compaction_seconds = SERVER_KNOBS->ROCKSDB_PERIODIC_COMPACTION_SECONDS + jitter;
 	}
 	if (SERVER_KNOBS->ROCKSDB_TTL_COMPACTION_SECONDS > 0) {
-		options.ttl = SERVER_KNOBS->ROCKSDB_TTL_COMPACTION_SECONDS;
+		// Adding two days range of jitter.
+		int64_t jitter = 2 * 24 * 60 * 60 * deterministicRandom()->random01();
+		options.ttl = SERVER_KNOBS->ROCKSDB_TTL_COMPACTION_SECONDS + jitter;
 	}
 	if (SERVER_KNOBS->ROCKSDB_MAX_COMPACTION_BYTES > 0) {
 		options.max_compaction_bytes = SERVER_KNOBS->ROCKSDB_MAX_COMPACTION_BYTES;
@@ -359,7 +364,7 @@ std::string getErrorReason(BackgroundErrorReason reason) {
 // could potentially cause segmentation fault.
 class RocksDBErrorListener : public rocksdb::EventListener {
 public:
-	RocksDBErrorListener(UID id) : id(id){};
+	RocksDBErrorListener(UID id) : id(id) {};
 	void OnBackgroundError(rocksdb::BackgroundErrorReason reason, rocksdb::Status* bg_error) override {
 		TraceEvent(SevError, "RocksDBBGError", id)
 		    .detail("Reason", getErrorReason(reason))
@@ -399,7 +404,7 @@ private:
 
 class RocksDBEventListener : public rocksdb::EventListener {
 public:
-	RocksDBEventListener(std::shared_ptr<SharedRocksDBState> sharedState) : sharedState(sharedState){};
+	RocksDBEventListener(std::shared_ptr<SharedRocksDBState> sharedState) : sharedState(sharedState) {};
 
 	void OnFlushCompleted(rocksdb::DB* db, const rocksdb::FlushJobInfo& info) override {
 		sharedState->setLastFlushTime(now());
@@ -434,6 +439,8 @@ const StringRef ROCKSDB_READVALUE_GET_HISTOGRAM = "RocksDBReadValueGet"_sr;
 const StringRef ROCKSDB_READPREFIX_GET_HISTOGRAM = "RocksDBReadPrefixGet"_sr;
 const StringRef ROCKSDB_READ_RANGE_BYTES_RETURNED_HISTOGRAM = "RocksDBReadRangeBytesReturned"_sr;
 const StringRef ROCKSDB_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM = "RocksDBReadRangeKVPairsReturned"_sr;
+const StringRef ROCKSDB_DELETES_PER_COMMIT_HISTOGRAM = "RocksDBDeletesPerCommit"_sr;
+const StringRef ROCKSDB_DELETE_RANGES_PER_COMMIT_HISTOGRAM = "RocksDBDeleteRangesPerCommit"_sr;
 
 rocksdb::ExportImportFilesMetaData getMetaData(const CheckpointMetaData& checkpoint) {
 	rocksdb::ExportImportFilesMetaData metaData;
@@ -699,7 +706,7 @@ public:
 
 	uint64_t numTimesReadIteratorsReused() { return iteratorsReuseCount; }
 
-	FutureStream<Void> getDeleteIteratorsFutureStream() { return deleteIteratorsPromise.getFuture(); }
+	ThreadFutureStream<Void> getDeleteIteratorsFutureStream() { return deleteIteratorsPromise.getFuture(); }
 
 private:
 	std::unordered_map<int, ReadIterator> iteratorsMap;
@@ -982,7 +989,7 @@ uint64_t PerfContextMetrics::getRocksdbPerfcontextMetric(int metric) {
 
 ACTOR Future<Void> refreshReadIteratorPool(std::shared_ptr<ReadIteratorPool> readIterPool) {
 	if (SERVER_KNOBS->ROCKSDB_READ_RANGE_REUSE_ITERATORS || SERVER_KNOBS->ROCKSDB_READ_RANGE_REUSE_BOUNDED_ITERATORS) {
-		state FutureStream<Void> deleteIteratorsFutureStream = readIterPool->getDeleteIteratorsFutureStream();
+		state ThreadFutureStream<Void> deleteIteratorsFutureStream = readIterPool->getDeleteIteratorsFutureStream();
 		loop {
 			choose {
 				when(wait(delay(SERVER_KNOBS->ROCKSDB_READ_RANGE_ITERATOR_REFRESH_TIME))) {
@@ -1228,6 +1235,8 @@ ACTOR Future<Void> rocksDBMetricLogger(UID id,
 		e.detail("NumTimesReadIteratorsReused", stat - readIteratorPoolStats["NumTimesReadIteratorsReused"]);
 		readIteratorPoolStats["NumTimesReadIteratorsReused"] = stat;
 
+		e.detail("BlockCacheSize", SERVER_KNOBS->ROCKSDB_BLOCK_CACHE_SIZE);
+
 		counters->cc.logToTraceEvent(e);
 
 		if (SERVER_KNOBS->ROCKSDB_PERFCONTEXT_ENABLE) {
@@ -1311,6 +1320,82 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		}
 
 		void init() override {}
+
+		struct IngestSSTFilesAction : TypedAction<Writer, IngestSSTFilesAction> {
+			IngestSSTFilesAction(std::shared_ptr<BulkLoadFileSetKeyMap> localFileSets) : localFileSets(localFileSets) {}
+
+			double getTimeEstimate() const override { return SERVER_KNOBS->COMMIT_TIME_ESTIMATE; }
+
+			std::shared_ptr<BulkLoadFileSetKeyMap> localFileSets;
+			ThreadReturnPromise<Void> done;
+		};
+
+		void action(IngestSSTFilesAction& a) {
+			// Create a list of SST files to ingest
+			std::vector<std::string> sstFiles;
+			for (const auto& [range, fileSet] : *a.localFileSets) {
+				if (fileSet.hasDataFile()) {
+					sstFiles.push_back(fileSet.getDataFileFullPath());
+				}
+			}
+
+			if (sstFiles.empty()) {
+				TraceEvent(SevInfo, "RocksDBIngestSSTFilesNoFiles", id);
+				a.done.send(Void()); // Nothing to ingest
+				return;
+			}
+
+			// Configure ingestion options
+			rocksdb::IngestExternalFileOptions options;
+			options.move_files = true;
+			options.verify_checksums_before_ingest = true;
+			options.allow_blocking_flush = true;
+			// write_global_seqno is default true which means on ingest the SST file is rewritten w/ seqno injected for
+			// each KV.
+
+			// Ingest the SST files
+			// The default column family parameter is necessary here; w/o it the ingested keyvalues are unreadable
+			rocksdb::Status status = db->IngestExternalFile(cf, sstFiles, options);
+
+			if (!status.ok()) {
+				logRocksDBError(id, status, "IngestSSTFiles");
+				a.done.sendError(statusToError(status));
+				return;
+			}
+
+			a.done.send(Void());
+		}
+
+		struct CompactRangeAction : TypedAction<Writer, CompactRangeAction> {
+			CompactRangeAction(KeyRangeRef range) : range(range) {}
+
+			double getTimeEstimate() const override { return SERVER_KNOBS->COMMIT_TIME_ESTIMATE; }
+
+			const KeyRange range;
+			ThreadReturnPromise<Void> done;
+		};
+
+		void action(CompactRangeAction& a) {
+			// Configure compaction options
+			rocksdb::CompactRangeOptions options;
+			// Force RocksDB to rewrite file to last level
+			options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForceOptimized;
+
+			// Convert key range to slices
+			auto begin = toSlice(a.range.begin);
+			auto end = toSlice(a.range.end);
+
+			// Perform the compaction
+			rocksdb::Status status = db->CompactRange(options, cf, &begin, &end);
+
+			if (!status.ok()) {
+				logRocksDBError(id, status, "CompactRange");
+				a.done.sendError(statusToError(status));
+				return;
+			}
+
+			a.done.send(Void());
+		}
 
 		struct OpenAction : TypedAction<Writer, OpenAction> {
 			std::string path;
@@ -1936,7 +2021,17 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 	    fetchSemaphore(SERVER_KNOBS->ROCKSDB_FETCH_QUEUE_SOFT_MAX),
 	    numReadWaiters(SERVER_KNOBS->ROCKSDB_READ_QUEUE_HARD_MAX - SERVER_KNOBS->ROCKSDB_READ_QUEUE_SOFT_MAX),
 	    numFetchWaiters(SERVER_KNOBS->ROCKSDB_FETCH_QUEUE_HARD_MAX - SERVER_KNOBS->ROCKSDB_FETCH_QUEUE_SOFT_MAX),
-	    errorListener(std::make_shared<RocksDBErrorListener>(id)), errorFuture(errorListener->getFuture()) {
+	    errorListener(std::make_shared<RocksDBErrorListener>(id)), errorFuture(errorListener->getFuture()),
+	    deletesPerCommitHistogram(Histogram::getHistogram(ROCKSDBSTORAGE_HISTOGRAM_GROUP,
+	                                                      ROCKSDB_DELETES_PER_COMMIT_HISTOGRAM,
+	                                                      Histogram::Unit::countLinear,
+	                                                      0,
+	                                                      10000)),
+	    deleteRangesPerCommitHistogram(Histogram::getHistogram(ROCKSDBSTORAGE_HISTOGRAM_GROUP,
+	                                                           ROCKSDB_DELETE_RANGES_PER_COMMIT_HISTOGRAM,
+	                                                           Histogram::Unit::countLinear,
+	                                                           0,
+	                                                           10000)) {
 		eventListener = std::make_shared<RocksDBEventListener>(sharedState);
 		// In simluation, run the reader/writer threads as Coro threads (i.e. in the network thread. The storage engine
 		// is still multi-threaded as background compaction threads are still present. Reads/writes to disk will also
@@ -2004,7 +2099,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		}
 	}
 
-	ACTOR Future<Void> updateHistogram(FutureStream<std::pair<std::string, double>> metricFutureStream) {
+	ACTOR Future<Void> updateHistogram(ThreadFutureStream<std::pair<std::string, double>> metricFutureStream) {
 		state Reference<Histogram> commitLatencyHistogram = Histogram::getHistogram(
 		    ROCKSDBSTORAGE_HISTOGRAM_GROUP, ROCKSDB_COMMIT_LATENCY_HISTOGRAM, Histogram::Unit::milliseconds);
 		state Reference<Histogram> commitActionHistogram = Histogram::getHistogram(
@@ -2125,6 +2220,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 	void close() override { doClose(this, false); }
 
 	KeyValueStoreType getType() const override { return KeyValueStoreType(KeyValueStoreType::SSD_ROCKSDB_V1); }
+	bool supportsSstIngestion() const override { return true; }
 
 	Future<Void> init() override {
 		if (openFuture.isValid()) {
@@ -2146,6 +2242,8 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 			    0 /* default_cf_ts_sz default:0 */));
 			keysSet.clear();
 			maxDeletes = SERVER_KNOBS->ROCKSDB_SINGLEKEY_DELETES_MAX;
+			deletesPerCommit = 0;
+			deleteRangesPerCommit = 0;
 		}
 		ASSERT(defaultFdbCF != nullptr);
 		writeBatch->Put(defaultFdbCF, toSlice(kv.key), toSlice(kv.value));
@@ -2163,6 +2261,8 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 			    0 /* default_cf_ts_sz default:0 */));
 			keysSet.clear();
 			maxDeletes = SERVER_KNOBS->ROCKSDB_SINGLEKEY_DELETES_MAX;
+			deletesPerCommit = 0;
+			deleteRangesPerCommit = 0;
 		}
 
 		ASSERT(defaultFdbCF != nullptr);
@@ -2172,6 +2272,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 			writeBatch->Delete(defaultFdbCF, toSlice(keyRange.begin));
 			++counters.deleteKeyReqs;
 			--maxDeletes;
+			++deletesPerCommit;
 		} else {
 			++counters.deleteRangeReqs;
 			if (SERVER_KNOBS->ROCKSDB_SINGLEKEY_DELETES_ON_CLEARRANGE &&
@@ -2188,11 +2289,13 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 					writeBatch->Delete(defaultFdbCF, cursor->key());
 					++counters.convertedDeleteKeyReqs;
 					--maxDeletes;
+					++deletesPerCommit;
 					cursor->Next();
 				}
 				if (!cursor->status().ok() || maxDeletes <= 0) {
 					// if readrange iteration fails, then do a deleteRange.
 					writeBatch->DeleteRange(defaultFdbCF, toSlice(keyRange.begin), toSlice(keyRange.end));
+					++deleteRangesPerCommit;
 				} else {
 					auto it = keysSet.lower_bound(keyRange.begin);
 					while (it != keysSet.end() && *it < keyRange.end) {
@@ -2200,6 +2303,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 						++counters.convertedDeleteKeyReqs;
 						--maxDeletes;
 						it++;
+						++deletesPerCommit;
 					}
 					it = previousCommitKeysSet.lower_bound(keyRange.begin);
 					while (it != previousCommitKeysSet.end() && *it < keyRange.end) {
@@ -2207,10 +2311,12 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 						++counters.convertedDeleteKeyReqs;
 						--maxDeletes;
 						it++;
+						++deletesPerCommit;
 					}
 				}
 			} else {
 				writeBatch->DeleteRange(defaultFdbCF, toSlice(keyRange.begin), toSlice(keyRange.end));
+				++deleteRangesPerCommit;
 			}
 		}
 	}
@@ -2259,6 +2365,14 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		a->batchToCommit = std::move(self->writeBatch);
 		self->previousCommitKeysSet = std::move(self->keysSet);
 		self->maxDeletes = SERVER_KNOBS->ROCKSDB_SINGLEKEY_DELETES_MAX;
+		self->deletesPerCommitHistogram->sampleRecordCounter(self->deletesPerCommit);
+		self->deleteRangesPerCommitHistogram->sampleRecordCounter(self->deleteRangesPerCommit);
+		if (self->deletesPerCommit > 1000 || self->deleteRangesPerCommit > 1000)
+			TraceEvent("RocksDBDeletesCount", self->id)
+			    .detail("DeletesPerCommit", self->deletesPerCommit)
+			    .detail("DeleteRangesPerCommit", self->deleteRangesPerCommit);
+		self->deletesPerCommit = 0;
+		self->deleteRangesPerCommit = 0;
 		state Future<Void> fut = a->done.getFuture();
 		self->writeThread->post(a);
 		wait(fut);
@@ -2458,6 +2572,20 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		return EncryptionAtRestMode(EncryptionAtRestMode::DISABLED);
 	}
 
+	Future<Void> ingestSSTFiles(std::shared_ptr<BulkLoadFileSetKeyMap> localFileSets) override {
+		auto a = new Writer::IngestSSTFilesAction(localFileSets);
+		auto res = a->done.getFuture();
+		writeThread->post(a);
+		return res;
+	}
+
+	Future<Void> compactRange(KeyRangeRef range) override {
+		auto a = new Writer::CompactRangeAction(range);
+		auto res = a->done.getFuture();
+		writeThread->post(a);
+		return res;
+	}
+
 	DB db = nullptr;
 	std::shared_ptr<SharedRocksDBState> sharedState;
 	std::shared_ptr<PerfContextMetrics> perfContextMetrics;
@@ -2481,6 +2609,10 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 	std::set<Key> previousCommitKeysSet;
 	// maximum number of single key deletes in a commit, if ROCKSDB_SINGLEKEY_DELETES_ON_CLEARRANGE is enabled.
 	int maxDeletes;
+	int deletesPerCommit;
+	int deleteRangesPerCommit;
+	Reference<Histogram> deletesPerCommitHistogram;
+	Reference<Histogram> deleteRangesPerCommitHistogram;
 	Optional<Future<Void>> metrics;
 	FlowLock readSemaphore;
 	int numReadWaiters;
@@ -2925,6 +3057,54 @@ TEST_CASE("noSim/RocksDB/RangeClear") {
 	wait(closed);
 	return Void();
 }
-} // namespace
 
+TEST_CASE("noSim/fdbserver/KeyValueStoreRocksDB/IngestSSTFileVisibility") {
+	state std::string testDir = "test_ingest_sst_visibility";
+	state UID testStoreID = deterministicRandom()->randomUniqueID();
+	state RocksDBKeyValueStore* kvStore = new RocksDBKeyValueStore(testDir, testStoreID);
+
+	// Initialize the store
+	wait(kvStore->init());
+
+	// Create an SST file
+	state std::string sstFilename = "test.sst"; // Base filename
+	state std::string sstFileFullPath = joinPath(testDir, sstFilename); // Full path for writer
+	rocksdb::SstFileWriter sstWriter(rocksdb::EnvOptions(), kvStore->sharedState->getOptions());
+	ASSERT(sstWriter.Open(sstFileFullPath).ok()); // Use full path here
+	ASSERT(sstWriter.Put("test_key", "test_value").ok());
+	ASSERT(sstWriter.Finish().ok());
+
+	// Create and populate the file set map (which is a vector)
+	state std::shared_ptr<BulkLoadFileSetKeyMap> fileSetMap = std::make_shared<BulkLoadFileSetKeyMap>();
+	state std::string dummyManifestFile = "dummy_manifest.txt"; // Dummy filename for validation
+
+	// Create the BulkLoadFileSet using its constructor.
+	// Pass the test directory, dummy manifest, and the base SST filename.
+	BulkLoadFileSet fileSet(testDir, // rootPath
+	                        /*relativePath=*/"",
+	                        dummyManifestFile, // manifestFileName
+	                        sstFilename, // dataFileName (use base name)
+	                        /*byteSampleFileName=*/"",
+	                        BulkLoadChecksum()); // checksum
+
+	fileSetMap->emplace_back(allKeys, fileSet); // Use emplace_back for std::vector
+
+	// Ingest the SST file using the populated map
+	wait(kvStore->ingestSSTFiles(fileSetMap));
+
+	// Verify the key is visible
+	Optional<Value> value = wait(kvStore->readValue("test_key"_sr, Optional<ReadOptions>()));
+	ASSERT(value.present());
+	ASSERT(value.get() == "test_value"_sr);
+
+	// Clean up
+	Future<Void> closed = kvStore->onClosed(); // Get future before dispose
+	kvStore->dispose();
+	wait(closed); // Wait for close completion
+	platform::eraseDirectoryRecursive(testDir);
+
+	return Void();
+}
+
+} // namespace
 #endif // WITH_ROCKSDB

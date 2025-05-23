@@ -539,6 +539,33 @@ struct TeamCollectionInterface {
 	PromiseStream<GetTeamRequest> getTeam;
 };
 
+// Used to track the number of ongoing bulkload tasks for each storage server
+struct DDBulkLoadTaskBusyMap {
+public:
+	void addTask(const UID& ssid) { busyMap[ssid]++; }
+
+	void removeTask(const UID& ssid) {
+		auto it = busyMap.find(ssid);
+		ASSERT(it != busyMap.end());
+		it->second--;
+		if (it->second == 0) {
+			busyMap.erase(it);
+		}
+	}
+
+	int getTaskCount(const UID& ssid) {
+		auto it = busyMap.find(ssid);
+		if (it == busyMap.end()) {
+			return 0;
+		} else {
+			return it->second;
+		}
+	}
+
+private:
+	std::unordered_map<UID, int> busyMap; // <Storage Server ID, Task Count>
+};
+
 // Used to piggyback the data move priority when an unretrievable error happens to the task datamove.
 // If the priority indicates the data move is a team unhealthy related data move, the bulkload engine
 // system trigger a new data move when terminate the error task.
@@ -749,6 +776,8 @@ public:
 		return res;
 	}
 
+	DDBulkLoadTaskBusyMap busyMap; // <SSID, taskCount>
+
 private:
 	KeyRangeMap<Optional<DDBulkLoadEngineTask>> bulkLoadTaskMap;
 	UID ddId;
@@ -786,7 +815,7 @@ struct StorageWiggler : ReferenceCounted<StorageWiggler> {
 	State wiggleState = State::INVALID;
 	double lastStateChangeTs = 0.0; // timestamp describes when did the state change
 
-	explicit StorageWiggler(DDTeamCollection* collection) : teamCollection(collection), stopWiggleSignal(true){};
+	explicit StorageWiggler(DDTeamCollection* collection) : teamCollection(collection), stopWiggleSignal(true) {};
 	// wiggle related actors will quit when this signal is set to true
 	void setStopSignal(bool value) { stopWiggleSignal.set(value); }
 	bool isStopped() const { return stopWiggleSignal.get(); }

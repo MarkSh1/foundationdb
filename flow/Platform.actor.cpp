@@ -815,7 +815,7 @@ void getMachineLoad(uint64_t& idleTime, uint64_t& totalTime, bool logDetails) {
 	totalTime = t_user + t_nice + t_system + t_idle + t_iowait + t_irq + t_softirq + t_steal + t_guest;
 	idleTime = t_idle + t_iowait;
 
-	if (!DEBUG_DETERMINISM && logDetails)
+	if (!DEBUG_DETERMINISM && logDetails && !g_network->isSimulated())
 		TraceEvent("MachineLoadDetail")
 		    .detail("User", t_user)
 		    .detail("Nice", t_nice)
@@ -2104,9 +2104,9 @@ static void enableLargePages() {
 	ModifyPrivilege(SE_LOCK_MEMORY_NAME, true);
 	largePagesPrivilegeEnabled = true;
 #else
-		// SOMEDAY: can/should we teach the client how to enable large pages
-		// on Linux? Or just rely on the system to have been configured as
-		// desired?
+	// SOMEDAY: can/should we teach the client how to enable large pages
+	// on Linux? Or just rely on the system to have been configured as
+	// desired?
 #endif
 }
 
@@ -2334,8 +2334,8 @@ void atomicReplace(std::string const& path, std::string const& content, bool tex
 		if (!f)
 			throw io_error();
 #ifdef _WIN32
-			// In Windows case, ReplaceFile API is used which preserves the ownership,
-			// ACLs and other attributes of the original file
+		// In Windows case, ReplaceFile API is used which preserves the ownership,
+		// ACLs and other attributes of the original file
 #elif defined(__unixish__)
 		// get the uid/gid/mode bits of old file and set it on new file, else fail
 		struct stat info;
