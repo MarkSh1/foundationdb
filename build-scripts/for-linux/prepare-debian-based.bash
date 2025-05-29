@@ -34,7 +34,8 @@ $BASE_DIR/prepare-debian-based-jemalloc.bash
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   liblz4-dev \
-  libssl-dev
+  libssl-dev \
+  libz-dev
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libmono-system-data-datasetextensions4.0-cil \

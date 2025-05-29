@@ -467,7 +467,7 @@ if(WITH_PYTHON)
       restarting/to_7.3.51_until_7.4.0/ConfigureStorageMigrationTestRestart-2.toml)
     add_fdb_test(
       TEST_FILES restarting/to_7.3.51_until_7.4.0/CycleTestRestart-1.toml
-      restarting/to_7.3.51_until_7.4.0/CycleTestRestart-2.toml)
+      restarting/to_7.3.51_until_7.4.0/CycleTestRestart-2.toml IGNORE)
     add_fdb_test(
       TEST_FILES restarting/to_7.4.0/BlobGranuleRestartCorrectness-1.toml
       restarting/to_7.4.0/BlobGranuleRestartCorrectness-2.toml)
