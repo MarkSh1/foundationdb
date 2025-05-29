@@ -29,6 +29,9 @@
 #include "fdbrpc/FailureMonitor.h"
 #include "fdbrpc/networksender.actor.h"
 #include "fdbrpc/simulator.h"
+#ifdef WITH_SWIFT
+#include <swift/bridging>
+#endif /* WITH_SWIFT */
 
 #ifdef WITH_SWIFT
 #include <swift/bridging>

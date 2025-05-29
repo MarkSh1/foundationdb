@@ -2,6 +2,9 @@
 minimumRegions = 2
 storageEngineExcludeTypes = [5]
 
+[[knobs]]
+max_read_transaction_life_versions = 5000000
+
 [[test]]
 testTitle = 'KillRegionCycle'
 clearAfterTest = false

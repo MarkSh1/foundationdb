@@ -252,7 +252,7 @@ Future<Void> TCServerInfo::updateStoreType() {
 void TCServerInfo::removeTeamsContainingServer(UID removedServer) {
 	for (int t = 0; t < teams.size(); t++) {
 		auto const& serverIds = teams[t]->getServerIDs();
-		if (std::count(serverIds.begin(), serverIds.end(), removedServer)) {
+		if (std::find(serverIds.begin(), serverIds.end(), removedServer) != serverIds.end()) {
 			teams[t--] = teams.back();
 			teams.pop_back();
 		}
@@ -278,6 +278,10 @@ int64_t TCServerInfo::loadBytes() const {
 
 int64_t TCServerInfo::getStorageQueueSize() const {
 	return getMetrics().bytesInput - getMetrics().bytesDurable;
+}
+
+int TCServerInfo::getMaxOngoingBulkLoadTaskCount() const {
+	return getMetrics().ongoingBulkLoadTaskCount;
 }
 
 void TCServerInfo::removeTeam(Reference<TCTeamInfo> team) {
@@ -444,6 +448,18 @@ Optional<int64_t> TCTeamInfo::getLongestStorageQueueSize() const {
 		}
 	}
 	return longestQueueSize;
+}
+
+Optional<int> TCTeamInfo::getMaxOngoingBulkLoadTaskCount() const {
+	int count = 0;
+	for (const auto& server : servers) {
+		if (server->metricsPresent()) {
+			count = std::max(count, server->getMaxOngoingBulkLoadTaskCount());
+		} else {
+			return Optional<int>();
+		}
+	}
+	return count;
 }
 
 int64_t TCTeamInfo::getLoadBytes(bool includeInFlight, double inflightPenalty) const {
