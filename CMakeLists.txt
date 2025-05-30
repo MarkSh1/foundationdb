@@ -24,7 +24,7 @@ if(POLICY CMP0135)
 endif()
 
 project(foundationdb
-  VERSION 7.4.0
+  VERSION 7.4.1
   DESCRIPTION "FoundationDB is a scalable, fault-tolerant, ordered key-value store with full ACID transactions."
   HOMEPAGE_URL "http://www.foundationdb.org/"
   LANGUAGES C CXX ASM Swift)
@@ -292,5 +292,3 @@ endif()
 print_components()
 
 message(STATUS "CPACK_COMPONENTS_ALL ${CPACK_COMPONENTS_ALL}")
-
-

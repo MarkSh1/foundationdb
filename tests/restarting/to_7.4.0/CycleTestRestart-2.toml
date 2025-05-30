@@ -1,15 +1,15 @@
 [configuration]
 maxTLogVersion = 7
 disableTss = true
-<<<<<<< HEAD
 tenantModes = ['disabled']
+storageEngineExcludeTypes = [5] # ShardedRocks is not supported with shard_encode_location_metadata = false
 
 [[knobs]]
 # testing that restart with writing recover at version to CSTATE.
 record_recover_at_in_cstate = true
 track_tlog_recovery = true
-=======
->>>>>>> apple-7.4
+dd_physical_shard_move_probability = 0
+shard_encode_location_metadata = false
 
 [[knobs]]
 # testing that restart with writing recover at version to CSTATE.
@@ -23,10 +23,7 @@ runSetup = false
     [[test.workload]]
     testName = 'Cycle'
     transactionsPerSecond = 2500.0
-<<<<<<< HEAD
-=======
     skipSetup = true
->>>>>>> apple-7.4
     nodeCount = 2500
     testDuration = 10.0
     expectedRate = 0

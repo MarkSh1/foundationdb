@@ -126,9 +126,6 @@ struct OldTLogCoreData {
 		if (ar.protocolVersion().hasGcTxnGenerations()) {
 			serializer(ar, recoverAt); // since 7.3
 		}
-		if (ar.protocolVersion().hasGcTxnGenerations()) {
-			serializer(ar, recoverAt);
-		}
 	}
 };
 

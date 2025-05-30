@@ -33,10 +33,6 @@
 #include <swift/bridging>
 #endif /* WITH_SWIFT */
 
-#ifdef WITH_SWIFT
-#include <swift/bridging>
-#endif /* WITH_SWIFT */
-
 // Common endpoint code for NetSAV<> and NetNotifiedQueue<>
 class FlowReceiver : public NetworkMessageReceiver, public NonCopyable {
 	Optional<PeerCompatibilityPolicy> peerCompatibilityPolicy_;
