@@ -1,6 +1,15 @@
 [configuration]
-maxTLogVersion = 6
+maxTLogVersion = 7
 disableTss = true
+<<<<<<< HEAD
+tenantModes = ['disabled']
+
+[[knobs]]
+# testing that restart with writing recover at version to CSTATE.
+record_recover_at_in_cstate = true
+track_tlog_recovery = true
+=======
+>>>>>>> apple-7.4
 
 [[knobs]]
 # testing that restart with writing recover at version to CSTATE.
@@ -14,6 +23,10 @@ runSetup = false
     [[test.workload]]
     testName = 'Cycle'
     transactionsPerSecond = 2500.0
+<<<<<<< HEAD
+=======
+    skipSetup = true
+>>>>>>> apple-7.4
     nodeCount = 2500
     testDuration = 10.0
     expectedRate = 0

@@ -4,7 +4,13 @@ runSetup=false
 
     [[test.workload]]
     testName="Storefront"
+<<<<<<< HEAD
     actorsPerClient=20
     transactionsPerSecond=200
     itemCount=20000
+=======
+    actorsPerClient=10
+    transactionsPerSecond=200
+    itemCount=10000
+>>>>>>> apple-7.4
     maxOrderSize=4

@@ -1,11 +1,30 @@
 [[test]]
+<<<<<<< HEAD
 testTitle="ClientTransactionProfilingCorrectness"
 clearAfterTest=true
+=======
+<<<<<<< HEAD:tests/restarting/from_5.2.0_until_6.3.0/ClientTransactionProfilingCorrectness-1.toml
+testTitle=ClientTransactionProfilingCorrectness
+clearAfterTest=false
+runSetup=true
+=======
+testTitle="ClientTransactionProfilingCorrectness"
+clearAfterTest=true
+>>>>>>> apple-7.4:tests/restarting/from_7.3.5_until_7.3.29/ClientTransactionProfilingCorrectness-2.toml
+>>>>>>> apple-7.4
 timeout=2100
 runSetup=true
 
     [[test.workload]]
+<<<<<<< HEAD
     testName="ApiCorrectness"
+=======
+<<<<<<< HEAD:tests/restarting/from_5.2.0_until_6.3.0/ClientTransactionProfilingCorrectness-1.toml
+    testName=ApiCorrectness
+=======
+    testName="ApiCorrectness"
+>>>>>>> apple-7.4:tests/restarting/from_7.3.5_until_7.3.29/ClientTransactionProfilingCorrectness-2.toml
+>>>>>>> apple-7.4
     numKeys=5000
     onlyLowerCase=true
     shortKeysRatio=0.5
@@ -25,5 +44,19 @@ runSetup=true
     randomTestDuration=60
 
     [[test.workload]]
+<<<<<<< HEAD
     testName="ClientTransactionProfileCorrectness"
 
+=======
+<<<<<<< HEAD:tests/restarting/from_5.2.0_until_6.3.0/ClientTransactionProfilingCorrectness-1.toml
+    testName=ClientTransactionProfileCorrectness
+
+    [[test.workload]]
+    testName=SaveAndKill
+    restartInfoLocation=simfdb/restartInfo.ini
+    testDuration=60
+=======
+    testName="ClientTransactionProfileCorrectness"
+
+>>>>>>> apple-7.4:tests/restarting/from_7.3.5_until_7.3.29/ClientTransactionProfilingCorrectness-2.toml
+>>>>>>> apple-7.4
