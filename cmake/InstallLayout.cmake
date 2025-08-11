@@ -88,7 +88,7 @@ function(symlink_files)
   endif()
 endfunction()
 
-fdb_install_packages(TGZ DEB EL7 VERSIONED)
+fdb_install_packages(TGZ DEB EL9 VERSIONED)
 fdb_install_dirs(BIN SBIN LIB FDBMONITOR INCLUDE ETC LOG DATA BACKUPAGENT)
 message(STATUS "FDB_INSTALL_DIRS -> ${FDB_INSTALL_DIRS}")
 
@@ -113,8 +113,8 @@ install_destinations(DEB
   ETC etc/foundationdb
   LOG var/log/foundationdb
   DATA var/lib/foundationdb/data)
-copy_install_destinations(DEB EL7)
-install_destinations(EL7 LIB usr/lib64)
+copy_install_destinations(DEB EL9)
+install_destinations(EL9 LIB usr/lib64)
 
 # This can be used for debugging in case above is behaving funky
 #print_install_destinations()
@@ -156,7 +156,7 @@ configure_file("${mv_packaging_dir}/server/prerm" "${script_dir}/server" @ONLY)
 set(LIB_DIR lib)
 configure_file("${mv_packaging_dir}/clients/postinst" "${script_dir}/clients" @ONLY)
 set(LIB_DIR lib64)
-configure_file("${mv_packaging_dir}/clients/postinst" "${script_dir}/clients/postinst-el7" @ONLY)
+configure_file("${mv_packaging_dir}/clients/postinst" "${script_dir}/clients/postinst-el9" @ONLY)
 configure_file("${mv_packaging_dir}/clients/prerm" "${script_dir}/clients" @ONLY)
 
 #make sure all directories we need exist
@@ -198,17 +198,17 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "FoundationDB is a scalable, fault-toleran
 set(CPACK_PACKAGE_ICON ${CMAKE_SOURCE_DIR}/packaging/foundationdb.ico)
 set(CPACK_PACKAGE_CONTACT "The FoundationDB Community")
 
-set(CPACK_COMPONENT_SERVER-EL7_DEPENDS clients-el7)
+set(CPACK_COMPONENT_SERVER-EL9_DEPENDS clients-el9)
 set(CPACK_COMPONENT_SERVER-DEB_DEPENDS clients-deb)
 set(CPACK_COMPONENT_SERVER-TGZ_DEPENDS clients-tgz)
 set(CPACK_COMPONENT_SERVER-VERSIONED_DEPENDS clients-versioned)
 
-set(CPACK_COMPONENT_SERVER-EL7_DISPLAY_NAME "foundationdb-server")
+set(CPACK_COMPONENT_SERVER-EL9_DISPLAY_NAME "foundationdb-server")
 set(CPACK_COMPONENT_SERVER-DEB_DISPLAY_NAME "foundationdb-server")
 set(CPACK_COMPONENT_SERVER-TGZ_DISPLAY_NAME "foundationdb-server")
 set(CPACK_COMPONENT_SERVER-VERSIONED_DISPLAY_NAME "foundationdb-${FDB_VERSION}-server")
 
-set(CPACK_COMPONENT_CLIENTS-EL7_DISPLAY_NAME "foundationdb-clients")
+set(CPACK_COMPONENT_CLIENTS-EL9_DISPLAY_NAME "foundationdb-clients")
 set(CPACK_COMPONENT_CLIENTS-DEB_DISPLAY_NAME "foundationdb-clients")
 set(CPACK_COMPONENT_CLIENTS-TGZ_DISPLAY_NAME "foundationdb-clients")
 set(CPACK_COMPONENT_CLIENTS-VERSIONED_DISPLAY_NAME "foundationdb-${FDB_VERSION}-clients")
@@ -399,7 +399,7 @@ if(NOT WIN32)
     COMPONENT server-deb)
   install(FILES ${CMAKE_SOURCE_DIR}/packaging/rpm/foundationdb.service
     DESTINATION "lib/systemd/system"
-    COMPONENT server-el7)
+    COMPONENT server-el9)
   install(PROGRAMS ${CMAKE_SOURCE_DIR}/packaging/deb/foundationdb-init
     DESTINATION "etc/init.d"
     RENAME "foundationdb"
