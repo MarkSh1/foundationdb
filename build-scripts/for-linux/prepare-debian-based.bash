@@ -1,10 +1,9 @@
 #!/bin/sh
 
 set -e
+set -x
 
 BASE_DIR=`dirname $0`
-
-sudo apt update
 
 # wget is required to download cmake 3.24 and jemalloc if you are using Debian 12 to build.
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y wget
@@ -33,6 +32,7 @@ $BASE_DIR/prepare-debian-based-swift.bash
 $BASE_DIR/prepare-debian-based-jemalloc.bash
 
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  zlib1g-dev \
   liblz4-dev \
   libssl-dev
 
@@ -41,5 +41,4 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libmono-system-runtime-serialization4.0-cil \
   libmono-system-xml-linq4.0-cil
 
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  python3-sphinx-bootstrap-theme
+python3 -m pip install sphinx-bootstrap-theme || echo "sphinx-bootstrap-theme installed via pip"
