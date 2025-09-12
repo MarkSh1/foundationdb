@@ -1,7 +1,6 @@
 #!/bin/sh
 
-set -e
-set -x
+set -ex
 
 BASE_DIR=`dirname $0`
 
@@ -41,4 +40,5 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   libmono-system-runtime-serialization4.0-cil \
   libmono-system-xml-linq4.0-cil
 
-python3 -m pip install sphinx-bootstrap-theme || echo "sphinx-bootstrap-theme installed via pip"
+sudo DEBIAN_FRONTEND=noninteractive \
+  python3 -m pip install sphinx-bootstrap-theme || echo "sphinx-bootstrap-theme installed via pip"
