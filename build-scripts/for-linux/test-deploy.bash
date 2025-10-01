@@ -65,6 +65,16 @@ $CONTAINER_ENGINE pull $DEB_IMAGE
 MY_ARCH_RPM=`uname -m`
 MY_ARCH_DEB=`dpkg-architecture -q DEB_HOST_ARCH`
 
+run_in_container() {
+  local IMAGE="$1"
+  local CMD="$2"
+  $CONTAINER_ENGINE run --rm --privileged --systemd=always \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+    -v "$DISTR_DIR:/mnt/distr:Z,ro" \
+    "$IMAGE" \
+    /bin/bash -c "$CMD"
+}
+
 test_deploy_pkgs() {
   IMAGE=$1
   INSTALL_CMD=$2
@@ -86,8 +96,11 @@ test_deploy_pkgs() {
 
   echo "Trying to install the client package only..."
   set -x
-  if ! $CONTAINER_ENGINE run --rm -v "$DISTR_DIR:/mnt/distr:Z,ro" $IMAGE \
-    /bin/bash -c "$INSTALL_CMD /mnt/distr/$CLIENT_FILE && $CLIENT_CHECK_WITH getent passwd foundationdb"; then
+  if ! run_in_container \
+    "$IMAGE" \
+    "$INSTALL_CMD \
+    /mnt/distr/$CLIENT_FILE && $CLIENT_CHECK_WITH getent passwd foundationdb" 
+  then
     echo >&2 "Installation of $CLIENT_FILE failed or the foundationdb user was $ERRMSG_CLIENT."
     return 3
   fi
@@ -97,8 +110,11 @@ test_deploy_pkgs() {
 
   echo "Trying to install the both client and server package packages..."
   set -x
-  if ! $CONTAINER_ENGINE run --rm -v "$DISTR_DIR:/mnt/distr:Z,ro" $IMAGE \
-    /bin/bash -c "$INSTALL_CMD /mnt/distr/$SERVER_FILE /mnt/distr/$CLIENT_FILE && getent passwd foundationdb"
+
+  if ! run_in_container \
+    "$IMAGE" \
+    "$INSTALL_CMD \
+    /mnt/distr/$SERVER_FILE /mnt/distr/$CLIENT_FILE && getent passwd foundationdb"
   then
     echo >&2 "Installation $SERVER_FILE and $CLIENT_FILE failed or the foundationdb user was not created."
     return 2
@@ -109,8 +125,12 @@ test_deploy_pkgs() {
 
   echo "Trying to install the server package only..."
   set -x
-  if $CONTAINER_ENGINE run --rm -v "$DISTR_DIR:/mnt/distr:Z,ro" $IMAGE \
-    /bin/bash -c "$INSTALL_CMD /mnt/distr/$SERVER_FILE"; then
+
+  if run_in_container \
+    "$IMAGE" \
+    "$INSTALL_CMD \
+    /mnt/distr/$SERVER_FILE"
+  then
     echo >&2 "Installation $SERVER_FILE without a client must fail."
     return 1
   fi
@@ -121,7 +141,12 @@ test_deploy_pkgs() {
 }
 
 RPM_INSTALL_CMD="dnf install -y"
-DEB_INSTALL_CMD="echo 'deb http://archive.debian.org/debian/ buster main' > /etc/apt/sources.list && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y"
+DEB_INSTALL_CMD="\
+  echo 'deb http://archive.debian.org/debian buster main' > /etc/apt/sources.list && \
+  echo 'deb http://archive.debian.org/debian buster-updates main' >> /etc/apt/sources.list && \
+  echo 'deb http://archive.debian.org/debian-security buster/updates main' >> /etc/apt/sources.list && \
+  apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv dbus"
 
 echo "Testing DEBs deploy..."
 test_deploy_pkgs \
