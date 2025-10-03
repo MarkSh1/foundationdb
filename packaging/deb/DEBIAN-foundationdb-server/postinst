@@ -38,9 +38,8 @@ if [ "$1" = configure ]; then
             systemctl start foundationdb.service
         else
             /etc/init.d/foundationdb start
+            update-rc.d foundationdb defaults
         fi
-
-        update-rc.d foundationdb defaults
 
         if [ "$NEWDB" != "" ]; then
             /usr/bin/fdbcli -C /etc/foundationdb/fdb.cluster --exec "configure new single memory; status" --timeout 20

@@ -391,13 +391,13 @@ if(NOT WIN32)
   install(FILES ${CMAKE_SOURCE_DIR}/packaging/make_public.py
     DESTINATION "usr/lib/foundationdb"
     COMPONENT server-deb)
-  install(FILES ${CMAKE_SOURCE_DIR}/packaging/rpm/foundationdb.service
+  install(FILES ${CMAKE_SOURCE_DIR}/packaging/foundationdb.service
     DESTINATION "lib/systemd/system"
     COMPONENT server-el7)
-  install(FILES ${CMAKE_SOURCE_DIR}/packaging/rpm/foundationdb.service
+  install(FILES ${CMAKE_SOURCE_DIR}/packaging/foundationdb.service
     DESTINATION "lib/systemd/system"
     COMPONENT server-deb)
-  install(FILES ${CMAKE_SOURCE_DIR}/packaging/rpm/foundationdb.service
+  install(FILES ${CMAKE_SOURCE_DIR}/packaging/foundationdb.service
     DESTINATION "usr/lib/foundationdb-${FDB_VERSION}/lib/systemd/system"
     COMPONENT server-versioned)
 endif()

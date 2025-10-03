@@ -12,7 +12,7 @@ if [ $1 -eq 1 ]; then
     /usr/bin/systemctl start foundationdb >/dev/null 2>&1
 
     if [ "$NEWDB" != "" ]; then
-        /usr/bin/fdbcli -C /etc/foundationdb/fdb.cluster --exec "configure new single memory" --timeout 20 >/dev/null 2>&1
+        /usr/bin/fdbcli -C /etc/foundationdb/fdb.cluster --exec "configure new single memory; status" --timeout 20 >/dev/null 2>&1
     fi
 else
     /usr/bin/systemctl condrestart foundationdb >/dev/null 2>&1
