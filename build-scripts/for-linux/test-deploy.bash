@@ -12,8 +12,10 @@ FULL_VERSION="$1"
 DISTR_DIR="$(readlink -f ${2:-bld/linux/packages})"
 RPM_IMAGE=${3:-oraclelinux:8}
 DEB_IMAGE=${4:-debian:10}
+
 CONTAINER_NAME="test_deploy"
-CONTAINER_MOUNTS="$DISTR_DIR:/mnt/distr"
+CONTAINER_DISTR_DIR="/mnt/distr"
+CONTAINER_MOUNTS="${DISTR_DIR}:${CONTAINER_DISTR_DIR}"
 
 err() { 
   echo -e "\033[1;31m$*\033[0m" >&2; 
@@ -44,10 +46,12 @@ fi
 # foundationdb writes to files with 2600 mode
 # but podman under kernel 6.1 or 6.2 does not respect this
 # so test if the writing works and choose an appropriate container engine
+
 test_container_engine() {
-  local CONTAINER_ENGINE="$1"
-  local CONTAINER_TEST_RUNNABLE='bash -c "touch /tmp/file01.tst; chgrp users /tmp/file01.tst; chmod 2600 /tmp/file01.tst; echo test >/tmp/file01.tst"'
-  eval "$CONTAINER_ENGINE run --rm $1 $CONTAINER_TEST_RUNNABLE"
+  local ENGINE="$1"
+  local CONTAINER_TEST_IMAGE=$DEB_IMAGE
+  local TEST_CMD='touch /tmp/file01.tst && chgrp users /tmp/file01.tst && chmod 2600 /tmp/file01.tst && echo test > /tmp/file01.tst'
+  $ENGINE run --rm $CONTAINER_TEST_IMAGE bash -c "$TEST_CMD"
 }
 
 #choose an appropriate CONTAINER_ENGINE
@@ -75,31 +79,85 @@ MY_ARCH_DEB=$(dpkg-architecture -q DEB_HOST_ARCH)
 
 wait_for_systemd() {
   local CONTAINER_NAME="$1"
-  local TIMEOUT_SEC=20
-  local SYSTEMD_READY=""
-  local STATE=""
+  local TIMEOUT_SEC=60
+  log "Waiting for systemd to start in container $CONTAINER_NAME..."
   while true; do
-    STATE=$($CONTAINER_ENGINE exec "${CONTAINER_NAME}" systemctl is-system-running 2>/dev/null || true)
-    case "$STATE" in
-      running|degraded|initializing|starting)
-        SYSTEMD_READY=1
-        break
-        ;;
-    esac
-    printf "\r\033[K[*] %s (%ds)" "$STATE" "$TIMEOUT_SEC"
+    PID1=$($CONTAINER_ENGINE exec ${CONTAINER_NAME} ps -p 1 -o comm=)
+    if [[ "$PID1" == "systemd" ]]; then
+      printf "\nsystemd is running (PID 1)\n"
+      return 0
+    fi
+    printf "\r\033[K[*] %s (%ds)" "$PID1" "$TIMEOUT_SEC"
     sleep 1
     ((TIMEOUT_SEC--))
     if [[ $TIMEOUT_SEC -le 0 ]]; then
-      break
+      err "\nsystemd is not running in container (final state: $PID1)"
+      return 1
     fi
   done
-  if [[ -z "$SYSTEMD_READY" ]]; then
-      err "\nSystemd did not start in container (final state: $STATE)"
-      return 1
-  else
-      return 0
+}
+
+remove_container_if_exists() {
+  if $CONTAINER_ENGINE ps -a --format "{{.Names}}" | grep -qx "${CONTAINER_NAME}"; then
+    $CONTAINER_ENGINE rm -f "${CONTAINER_NAME}"
   fi
 }
+
+prepare_systemd_script() {
+  case "$1" in
+    *debian:10*)
+      cat <<'EOF'
+echo 'deb http://archive.debian.org/debian buster main' > /etc/apt/sources.list
+echo 'deb http://archive.debian.org/debian buster-updates main' >> /etc/apt/sources.list
+echo 'deb http://archive.debian.org/debian-security buster/updates main' >> /etc/apt/sources.list
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv dbus procps
+exec /lib/systemd/systemd
+EOF
+      ;;
+    *oraclelinux:8*)
+      echo 'exec /lib/systemd/systemd'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+start_systemd_container() {
+  local IMAGE="$1"
+
+  local SCRIPT
+  SCRIPT="$(prepare_systemd_script "$IMAGE")" || {
+    err "systemd preparation script is not defined for $IMAGE"
+    return 1
+  }
+
+  $CONTAINER_ENGINE run -d --privileged --systemd=always --cgroupns=host \
+    --name "${CONTAINER_NAME}" \
+    -e container=podman \
+    --tmpfs /run --tmpfs /tmp \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
+    -v "${CONTAINER_MOUNTS}:Z,ro" \
+    "$IMAGE" \
+    /bin/bash -c "$SCRIPT"
+}
+
+run_simple_container() {
+  local IMAGE="$1"
+  local INSTALL_CMD="$2"
+  local INSTALL_DISTR="$3"
+  local TEST_CLIENT="$4"
+  $CONTAINER_ENGINE run --rm \
+    -v "${CONTAINER_MOUNTS}:Z,ro" \
+    "$IMAGE" \
+    /bin/bash -ec "$INSTALL_CMD $INSTALL_DISTR && $TEST_CLIENT"
+}
+
+declare -A INSTALL_CMDS=(
+  [deb]="apt-get install -y"
+  [rpm]="dnf install -y"
+)
 
 get_pkg_type() {
   local FILE="$1"
@@ -112,84 +170,47 @@ get_pkg_type() {
   fi
 }
 
-remove_container_if_exists() {
-  if $CONTAINER_ENGINE ps -a --format "{{.Names}}" | grep -qx "${CONTAINER_NAME}"; then
-    $CONTAINER_ENGINE rm -f "${CONTAINER_NAME}"
-  fi
-}
-
-get_install_cmd() {
-  local pkg_type="$1"
-  declare -A INSTALL_CMDS=(
-    [deb]="apt-get install -y"
-    [rpm]="dnf install -y"
-  )
-  echo "${INSTALL_CMDS[$pkg_type]}"
-}
-
-start_systemd_container() {
-  local IMAGE="$1"
-  local INSTALL_SYSTEMD="$2"
-  $CONTAINER_ENGINE run -d --privileged --systemd=always --name "${CONTAINER_NAME}" \
-    -e container=podman \
-    --tmpfs /run --tmpfs /tmp \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
-    -v "${CONTAINER_MOUNTS}:Z,ro" \
-    "$IMAGE" \
-    /bin/bash -c "$INSTALL_SYSTEMD"
-}
-
-reinit_fdb_service() {
-  $CONTAINER_ENGINE exec -it "${CONTAINER_NAME}" /bin/bash -c "\
-    systemctl enable foundationdb >/dev/null 2>&1 && \
-    systemctl start foundationdb >/dev/null 2>&1 && \
-    fdbcli --exec 'configure new single memory; status' --timeout 20"
-}
-
-run_simple_container() {
-  local IMAGE="$1"
-  local INSTALL_CMD="$2"
-  local INSTALL_DISTR="$3"
-  $CONTAINER_ENGINE run --rm \
-    -v"${CONTAINER_MOUNTS}:Z,ro" \
-    "$IMAGE" \
-    /bin/bash -c "$INSTALL_CMD $INSTALL_DISTR"
+exec_in_container() {
+  $CONTAINER_ENGINE exec -it "${CONTAINER_NAME}" /bin/bash -c "$1"
 }
 
 run_in_container() {
   local IMAGE="$1"
-  local INSTALL_SYSTEMD=${2:-}
+  local INSTALL_SYSTEMD=$2
   local INSTALL_DISTR="$3"
-
+  local TEST_CLIENT="$4"
+  local TEST_WRITE_READ="$5"
+  
   local PKG_TYPE
   PKG_TYPE=$(get_pkg_type "$INSTALL_DISTR")
   local INSTALL_CMD
-  INSTALL_CMD=$(get_install_cmd "$PKG_TYPE")
+  INSTALL_CMD="${INSTALL_CMDS[$PKG_TYPE]}"
 
   remove_container_if_exists
   trap 'remove_container_if_exists' RETURN
   
-  if [[ -n "$INSTALL_SYSTEMD" ]]
-  then
-    if ! start_systemd_container "$IMAGE" "$INSTALL_SYSTEMD"
-    then
+  if [[ "$INSTALL_SYSTEMD" == "systemd" ]]; then
+    if ! start_systemd_container "$IMAGE"; then
       err "Cannot start a container from $IMAGE"
       return 1
     fi
     if ! wait_for_systemd ${CONTAINER_NAME}; then
       return 1
     fi
-    if ! $CONTAINER_ENGINE exec -it ${CONTAINER_NAME} /bin/bash -c "$INSTALL_CMD $INSTALL_DISTR"
-    then
-      if ! reinit_fdb_service
-      then
-        err "FDB installation or start failed"
-        return 1
-      fi
+    if ! exec_in_container "$INSTALL_CMD $INSTALL_DISTR"; then
+      err "FDB installation or start failed"
+      return 1
+    fi
+    if [[ -n "$TEST_CLIENT" ]] && ! exec_in_container "$TEST_CLIENT"; then
+      err "FDB client test command failed ($TEST_CLIENT)"
+      return 1
+    fi
+    if [[ -n "$TEST_WRITE_READ" ]] && ! exec_in_container "$TEST_WRITE_READ"; then
+      err "FDB write/read test command failed: key is not 'testvalue'"
+      return 1
     fi
   else 
-    if ! run_simple_container "$IMAGE" "$INSTALL_CMD" "$INSTALL_DISTR"
-    then
+    if ! run_simple_container "$IMAGE" "$INSTALL_CMD" "$INSTALL_DISTR" "$TEST_CLIENT"; then
       err "Cannot start a container from $IMAGE"
       return 1
     fi
@@ -200,11 +221,12 @@ run_install_test() {
   local IMAGE="$1"
   local INSTALL_SYSTEMD="$2"
   local INSTALL_DISTR="$3"
-  local SHOULD_FAIL="${4:-0}"
-  local ERRMSG="$5"
+  local TEST_CLIENT="$4"
+  local SHOULD_FAIL="${5:-0}"
+  local ERRMSG="$6"
+  local TEST_WRITE_READ="$7"
 
-
-  if run_in_container "$IMAGE" "$INSTALL_SYSTEMD" "$INSTALL_DISTR"; then
+  if run_in_container "$IMAGE" "$INSTALL_SYSTEMD" "$INSTALL_DISTR" "$TEST_CLIENT" "$TEST_WRITE_READ"; then
     if [[ "$SHOULD_FAIL" -eq 1 ]]; then
       err "$ERRMSG"
       return 1
@@ -219,82 +241,58 @@ run_install_test() {
   fi
 }
 
-
-prepare_ol8_systemd() {
-  exec /lib/systemd/systemd
-}
-
-prepare_debian10_systemd() {
-  echo 'deb http://archive.debian.org/debian buster main' > /etc/apt/sources.list
-  echo 'deb http://archive.debian.org/debian buster-updates main' >> /etc/apt/sources.list
-  echo 'deb http://archive.debian.org/debian-security buster/updates main' >> /etc/apt/sources.list
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv dbus
-  exec /lib/systemd/systemd
-}
-
 test_deploy_pkgs() {
   local IMAGE=$1
   local SERVER_FILE=$2
   local CLIENT_FILE=$3
   local USER_AFTER_CLIENT=${4:-Y}
-  local WITH_SYSTEMD=${5:-}
   
   local INSTALL_SYSTEMD=""
-  local CLIENT_CHECK_WITH=""
+  local TEST_CLIENT_WITH=""
   local ERRMSG_CLIENT=""
 
   log SERVER_FILE="$SERVER_FILE"
   log CLIENT_FILE="$CLIENT_FILE"
 
   if [[ $USER_AFTER_CLIENT == Y ]]; then
-    CLIENT_CHECK_WITH=""
-    ERRMSG_CLIENT="not created"
+    ERRMSG_CLIENT="the foundationdb user was not created"
   else
-    CLIENT_CHECK_WITH="!"
-    ERRMSG_CLIENT="created unexpectedly"
+    TEST_CLIENT_WITH="!"
+    ERRMSG_CLIENT="the foundationdb user created unexpectedly"
   fi
 
-  if [[ "$WITH_SYSTEMD" == "systemd" ]]
-  then
-    if [[ "$IMAGE" == *debian:10* ]]; then
-      INSTALL_SYSTEMD="$(declare -f prepare_debian10_systemd); prepare_debian10_systemd"
-    elif [[ "$IMAGE" == *oraclelinux:8* ]]; then
-      INSTALL_SYSTEMD="$(declare -f prepare_ol8_systemd); prepare_ol8_systemd"
-    else
-      err "Systemd preparation script is not defined for $IMAGE"
-      return 1
-    fi
-  fi
+  local TEST_CLIENT="getent passwd foundationdb"
+  TEST_CLIENT_WITH="$TEST_CLIENT_WITH $TEST_CLIENT"
 
-  declare -a tests=(
-    # "desc|install_distr|should_fail|errmsg|errcode"
-    "client_only|/mnt/distr/$CLIENT_FILE && $CLIENT_CHECK_WITH getent passwd foundationdb|0|Installation of $CLIENT_FILE failed or the foundationdb user was $ERRMSG_CLIENT.|3"
-    "client_and_server|/mnt/distr/$SERVER_FILE /mnt/distr/$CLIENT_FILE && getent passwd foundationdb|0|Installation $SERVER_FILE and $CLIENT_FILE failed or the foundationdb user was not created.|2"
-    "server_only|/mnt/distr/$SERVER_FILE|1|Installation $SERVER_FILE without a client must fail.|1"
+  local TEST_WRITE_READ='fdbcli --exec "writemode on; set key testvalue; get key" | grep -E "key.*is.*testvalue"'
+
+  declare -a TESTS=(
+    # "desc|install_distr|should_fail|errmsg|errcode|start_with_systemd|fdb_user_check|fdb_write_read_check"
+    "client_only|$CONTAINER_DISTR_DIR/$CLIENT_FILE|0|Installation of $CLIENT_FILE failed or $ERRMSG_CLIENT.|3|no|$TEST_CLIENT_WITH|:"
+    "client_and_server|$CONTAINER_DISTR_DIR/$SERVER_FILE $CONTAINER_DISTR_DIR/$CLIENT_FILE|0|Installation $SERVER_FILE and $CLIENT_FILE failed or $ERRMSG_CLIENT.|2|systemd|$TEST_CLIENT|$TEST_WRITE_READ"
+    "server_only|$CONTAINER_DISTR_DIR/$SERVER_FILE|1|Installation $SERVER_FILE without a client must fail.|1|no|:|:"
   )
 
-  for TEST in "${tests[@]}"; do
-    IFS="|" read -r DESC INSTALL_DISTR SHOULD_FAIL ERRMSG ERRCODE<<< "$TEST"
+  for TEST in "${TESTS[@]}"; do
+    IFS="|" read -r DESC INSTALL_DISTR SHOULD_FAIL ERRMSG ERRCODE INSTALL_SYSTEMD TEST_CLIENT TEST_WRITE_READ <<< "$TEST"
     log "<Trying to install: $DESC...>\n"
-    run_install_test "$IMAGE" "$INSTALL_SYSTEMD" "$INSTALL_DISTR" "$SHOULD_FAIL" "$ERRMSG" || return "$ERRCODE"
+    run_install_test "$IMAGE" "$INSTALL_SYSTEMD" "$INSTALL_DISTR" "$TEST_CLIENT" "$SHOULD_FAIL" "$ERRMSG" "$TEST_WRITE_READ" || return "$ERRCODE"
     log "<Test $DESC completed>\n"
   done
 }
 
-
 declare -a DEPLOY_SCENARIOS=(
-  # "desc|container_image|server_package_file|client_package_file|check_user_after_client|with_systemd"
-  "Testing DEBs deploy|$DEB_IMAGE|foundationdb-server_${FULL_VERSION}_$MY_ARCH_DEB.deb|foundationdb-clients_${FULL_VERSION}_$MY_ARCH_DEB.deb|Y|systemd"
-  "Testing versioned DEBs deploy|$DEB_IMAGE|foundationdb-${FULL_VERSION}-server-versioned_${FULL_VERSION}_$MY_ARCH_DEB.deb|foundationdb-${FULL_VERSION}-clients-versioned_${FULL_VERSION}_$MY_ARCH_DEB.deb|N|systemd"
-  "Testing RPMs deploy|$RPM_IMAGE|foundationdb-server-${FULL_VERSION}.$MY_ARCH_RPM.rpm|foundationdb-clients-${FULL_VERSION}.$MY_ARCH_RPM.rpm|Y|systemd"
-  "Testing versioned RPMs deploy|$RPM_IMAGE|foundationdb-${FULL_VERSION}-server-versioned-${FULL_VERSION}.$MY_ARCH_RPM.rpm|foundationdb-${FULL_VERSION}-clients-versioned-${FULL_VERSION}.$MY_ARCH_RPM.rpm|N|systemd"
+  # "desc|container_image|server_package_file|client_package_file|check_user_after_client"
+  "Testing DEBs deploy|$DEB_IMAGE|foundationdb-server_${FULL_VERSION}_$MY_ARCH_DEB.deb|foundationdb-clients_${FULL_VERSION}_$MY_ARCH_DEB.deb|Y"
+  "Testing versioned DEBs deploy|$DEB_IMAGE|foundationdb-${FULL_VERSION}-server-versioned_${FULL_VERSION}_$MY_ARCH_DEB.deb|foundationdb-${FULL_VERSION}-clients-versioned_${FULL_VERSION}_$MY_ARCH_DEB.deb|N"
+  "Testing RPMs deploy|$RPM_IMAGE|foundationdb-server-${FULL_VERSION}.$MY_ARCH_RPM.rpm|foundationdb-clients-${FULL_VERSION}.$MY_ARCH_RPM.rpm|Y"
+  "Testing versioned RPMs deploy|$RPM_IMAGE|foundationdb-${FULL_VERSION}-server-versioned-${FULL_VERSION}.$MY_ARCH_RPM.rpm|foundationdb-${FULL_VERSION}-clients-versioned-${FULL_VERSION}.$MY_ARCH_RPM.rpm|N"
 )
 
 for SCENARIO in "${DEPLOY_SCENARIOS[@]}"; do
-  IFS="|" read -r DESC IMAGE SERVER_FILE CLIENT_FILE USER_AFTER_CLIENT WITH_SYSTEMD <<< "$SCENARIO"
-  log "\n<<<$DESC...>>>\n"
-  test_deploy_pkgs "$IMAGE" "$SERVER_FILE" "$CLIENT_FILE" "$USER_AFTER_CLIENT" "$WITH_SYSTEMD"
+  IFS="|" read -r DESC IMAGE SERVER_FILE CLIENT_FILE USER_AFTER_CLIENT <<< "$SCENARIO"
+  log "[!!!] $DESC... [!!!]\n"
+  test_deploy_pkgs "$IMAGE" "$SERVER_FILE" "$CLIENT_FILE" "$USER_AFTER_CLIENT" || return $? 2>/dev/null || exit $?
 done
 
-log "\n<<<All deployment tests completed successfully>>>\n"
+log "\n[V] All deployment tests completed successfully [V]\n"
