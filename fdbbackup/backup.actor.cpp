@@ -82,302 +82,6 @@
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 
-class ParsedArgs {
-public:
-	std::pair<int, char**> getCSimpleOptArgs() const 
-	{
-		freeAllocatedArgs();
-
-		int argc = options.size() + 1;
-		char** argv = new char*[argc];
-
-		argv[0] = allocateString("backup");
-
-		for (int i = 0; i < options.size(); i++) {
-			argv[i + 1] = allocateString(options[i]);
-		}
-
-		return {argc, argv};
-	}
-
-	bool parseArguments(int argc, const char* argv[]) 
-	{
-		clear();
-		for (int i = 1; i < argc; ++i) {
-			 std::string_view arg = argv[i];
-
-			if (isCommand(arg)) {
-				if (!isValidCommand(arg)) {
-					fmt::print(stderr, "ERROR: Unknown command '{}'\n", arg);
-					return false;
-				}
-				commands.emplace_back(arg);
-				continue;
-			}
-			if (!processOption(argc, argv, i)) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	const std::vector<std::string>& getCommands() const { return commands; }
-
-	~ParsedArgs() { freeAllocatedArgs(); }
-
-private:
-	std::vector<std::string> commands;
-	std::vector<std::string> options;
-	mutable std::vector<char*> allocatedArgs;
-	struct OptionInfo 
-	{
-		std::string_view name;
-		bool hasParameter;
-	};
-
-	static constexpr std::string_view validCommands[] = {
-		"start", "status", "abort", "wait", "discontinue", 
-		"pause", "resume", "expire", "delete", "describe", 
-		"list", "query", "dump", "cleanup", "tags", "modify"
-	};
-
-	static constexpr OptionInfo knownOptions[] = {
-		// Top level options
-		{"--version", false},
-		{"-v", false},
-		{"--build-flags", false},
-		{"--help", false},
-		{"-h", false},
-		{"-?", false},
-
-		// Cluster and connection options
-		{"--cluster-file", true},
-		{"-C", true},
-		{"--source", true},
-		{"-s", true},
-		{"--destination", true},
-		{"-d", true},
-		{"--dest-cluster-file", true},
-		{"--orig-cluster-file", true},
-
-		// Backup container and URL options
-		{"--destcontainer", true},
-		{"--backup-container", true},
-		{"--dest-container", true},
-		{"--restore-container", true},
-		{"-r", true},
-		{"--base-url", true},
-		{"-b", true},
-
-		// Backup control options
-		{"--waitfordone", false},
-		{"-w", false},
-		{"--wait-for-completion", false},
-		{"--no-stop-when-done", false},
-		{"--stop-when-done", false},
-		{"-z", false},
-		{"--partitioned-log-experimental", false},
-
-		// Snapshot and interval options
-		{"--snapshot-interval", true},
-		{"--initial-snapshot-interval", true},
-		{"--active-snapshot-interval", true},
-
-		// Tag and key options
-		{"--tagname", true},
-		{"-t", true},
-		{"--keys", true},
-		{"-k", true},
-		{"--keys-file", true},
-
-		// Version and timestamp options
-		{"--version", true},
-		{"--timestamp", true},
-		{"--begin-version", true},
-		{"--target-version", true},
-		{"--target-timestamp", true},
-		{"--target-datetime", true},
-		{"--expire-before-version", true},
-		{"--expire-before-datetime", true},
-		{"--expire-before-timestamp", true},
-		{"--min-restorable-days", true},
-		{"--delete-before-days", true},
-		{"--restorable-after-version", true},
-		{"--restorable-after-timestamp", true},
-		{"--query-restore-version", true},
-		{"-qrv", true},
-		{"--query-restore-timestamp", true},
-		{"--query-restore-snapshot-version", true},
-
-		// Prefix and key manipulation
-		{"--add-prefix", true},
-		{"--prefix-add", true},
-		{"--remove-prefix", true},
-		{"--prefix-remove", true},
-
-		// Operational options
-		{"--dryrun", false},
-		{"-n", false},
-		{"--force", false},
-		{"-f", false},
-		{"--quiet", false},
-		{"-q", false},
-		{"--crash", false},
-		{"--deep", false},
-		{"--version-timestamps", false},
-		{"--json", false},
-		{"--verify-uid", true},
-
-		// Error and limit options
-		{"--errorlimit", true},
-		{"-e", true},
-		{"--timeout", true},
-		{"--retries", true},
-
-		// Logging and tracing options
-		{"--log", false},
-		{"--trace", false},
-		{"--trace-dir", true},
-		{"--logdir", true},
-		{"--trace-format", true},
-		{"--trace-log-group", true},
-		{"--loggroup", true},
-
-		// Memory options
-		{"--memory", true},
-		{"-m", true},
-		{"--memory-vsize", true},
-
-		// Development options
-		{"--dev-help", false},
-
-		// TLS options
-		{"--tls-plugin", true},
-		{"--tls-certificates", true},
-		{"--tls-password", true},
-		{"--tls-ca-file", true},
-		{"--tls-key", true},
-		{"--tls-verify-peers", true},
-
-		// Blob and credentials options
-		{"--blob-credentials", true},
-		{"--proxy", true},
-		{"--blob-manifest-url", true},
-
-		// other options
-		{"--incremental", false},
-		{"--encryption-key-file", true},
-		{"--encrypt-files", true},
-		{"--delete-data", false},
-		{"--min-cleanup-seconds", true},
-		{"--begin", true},
-		{"--end", true},
-		{"--user-data", false},
-		{"--system-metadata", false},
-		{"--only-applyable-files", false},
-		{"--inconsistent-snapshot-only", false},
-		{"--cleanup", false},
-		{"--dstonly", false},
-
-#ifdef _WIN32
-		{"--parentpid", true}
-#endif
-		// prefix options 
-		{"--knob-", true},
-		{"--locality-", true}
-	};
-
-	void clear() {
-		commands.clear();
-		options.clear();
-	}
-
-	void freeAllocatedArgs() const {
-		for (char* arg : allocatedArgs) {
-			free(arg);
-		}
-		allocatedArgs.clear();
-	}
-
-	char* allocateString(const std::string& str) const {
-		char* allocated = strdup(str.c_str());
-		allocatedArgs.push_back(allocated);
-		return allocated;
-	}
-
-	bool isCommand(std::string_view arg) const {
-		return !arg.empty() && arg[0] != '-';
-	}
-	bool isValidCommand(std::string_view command) const {
-		for (auto validCmd : validCommands) {
-			if (command == validCmd) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	bool processOption(int argc, const char* argv[], int& i) {
-		std::string_view arg = argv[i];
-		options.emplace_back(arg);
-
-		auto [found, needsParam] = findOption(arg);
-
-		if (!found) {
-			fmt::print(stderr, "ERROR: Unknown option '{}'\n", arg);
-			return false;
-		}
-
-		if (needsParam) {
-			return processOptionParameter(argc, argv, i, arg);
-		}
-
-		return true;
-	}
-
-	constexpr std::pair<bool, bool> findOption(std::string_view arg) const noexcept
-	{
-		for (const auto& opt : knownOptions) 
-		{
-			auto optName = opt.name;
-			if (arg == optName) 
-			{
-				return {true, opt.hasParameter};
-			}
-
-			// --knob-, --locality-
-			if (isPrefixOption(optName) && 
-				arg.size() >= optName.size() && 
-				arg.compare(0, optName.size(), optName) == 0) 
-			{
-				return {true, opt.hasParameter};
-			}
-		}
-		return {false, false};
-	}
-
-	bool isPrefixOption(std::string_view optName) const {
-		return !optName.empty() && optName.back() == '-';
-	}
-
-	bool processOptionParameter(int argc, const char* argv[], int& i, std::string_view option) {
-		if (i + 1 >= argc) {
-			fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
-			return false;
-		}
-
-		std::string_view nextArg = argv[i + 1];
-		if (!nextArg.empty() && nextArg[0] == '-') {
-			fmt::print(stderr, "ERROR: Option {} requires a parameter, but got {}\n", option, nextArg);
-			return false;
-		}
-
-		++i;
-		options.emplace_back(nextArg);
-		return true;
-	}
-};
-
 // Type of program being executed
 enum class ProgramExe { AGENT, BACKUP, RESTORE, FASTRESTORE_TOOL, DR_AGENT, DB_BACKUP, UNDEFINED };
 
@@ -1783,16 +1487,6 @@ BackupType getBackupType(std::string backupType) {
 	return enBackupType;
 }
 
-BackupType getBackupTypeFromCommands(const std::vector<std::string>& commands) 
-{
-	for (const auto& cmd : commands) {
-		if (auto type = getBackupType(cmd); type != BackupType::UNDEFINED) {
-			return type;
-		}
-	}
-	return BackupType::UNDEFINED;
-}
-
 RestoreType getRestoreType(std::string name) {
 	if (name == "start")
 		return RestoreType::START;
@@ -1802,15 +1496,6 @@ RestoreType getRestoreType(std::string name) {
 		return RestoreType::STATUS;
 	if (name == "wait")
 		return RestoreType::WAIT;
-	return RestoreType::UNKNOWN;
-}
-
-RestoreType getRestoreTypeFromCommands(const std::vector<std::string>& commands) {
-	for (const auto& cmd : commands) {
-		if (auto type = getRestoreType(cmd); type != RestoreType::UNKNOWN) {
-			return type;
-		}
-	}
 	return RestoreType::UNKNOWN;
 }
 
@@ -1835,16 +1520,6 @@ DBType getDBType(std::string dbType) {
 		enBackupType = i->second;
 
 	return enBackupType;
-}
-
-DBType getDBTypeFromCommands(const std::vector<std::string>& commands) 
-{
-	for (const auto& cmd : commands) {
-		if (auto type = getDBType(cmd); type != DBType::UNDEFINED) {
-			return type;
-		}
-	}
-	return DBType::UNDEFINED;
 }
 
 ACTOR Future<std::string> getLayerStatus(Reference<ReadYourWritesTransaction> tr,
@@ -3624,9 +3299,227 @@ Optional<Database> connectToCluster(std::string const& clusterFile,
 	return db;
 };
 
+class ParsedArgs {
+public:
+	ParsedArgs() = default;
+	ParsedArgs(const ParsedArgs&) = delete;
+	ParsedArgs& operator=(const ParsedArgs&) = delete;
+	ParsedArgs(ParsedArgs&&) = delete;
+	ParsedArgs& operator=(ParsedArgs&&) = delete;
+
+	void getCSimpleOptArgs(int& argc, char**& argv) const {
+		static std::vector<char*> argvStorage;
+		argc = 1; // program name
+
+		if (!commands.empty()) 
+		{
+			argc += 1; // command
+		}
+
+		argc += options.size(); // Add all options and their parameters
+
+		argvStorage.resize(argc + 1); // +1 for nullptr termination
+
+		int i = 0;
+		argvStorage[i++] = const_cast<char*>(programName.data());
+
+		if (!commands.empty()){
+			argvStorage[i++] = const_cast<char*>(commands[0].data());
+		}
+
+		for (size_t j = 0; j < options.size() && i < argc; ++j) {
+			argvStorage[i++] = const_cast<char*>(options[j].data());
+		}
+		argvStorage[argc] = nullptr;
+
+		argv = argvStorage.data();
+	}
+
+	bool parseArguments(int argc, char* argv[]) {
+		clear();
+		if (argc < 1) return false;
+
+		programName = argv[0];
+
+		for (int i = 1; i < argc; ++i) {
+			std::string_view arg = argv[i];
+
+			if (isCommand(arg)) {
+				if (!isValidCommand(arg)) {
+					fmt::print(stderr, "ERROR: Unknown command '{}'\n", arg);
+					return false;
+				}
+				commands.emplace_back(arg);
+				continue;
+			}
+			if (!processOption(argc, argv, i)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	const std::vector<std::string_view>& getCommands() const { return commands; }
+
+private:
+	std::vector<std::string_view> commands;
+	std::vector<std::string_view> options;
+	std::string_view programName = "";
+
+	static inline const std::unordered_set <std::string_view> validCommands {
+		"start", "status", "abort", "wait", "discontinue", 
+		"pause", "resume", "expire", "delete", "describe", 
+		"list", "query", "dump", "cleanup", "tags", "modify"
+	};
+
+	static bool isSOEndOption(const CSimpleOpt::SOption& opt) {
+		static constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
+		return opt.nId == END_MARKER.nId && opt.pszArg == END_MARKER.pszArg && opt.nArgType == END_MARKER.nArgType;
+	}
+
+	static const std::unordered_map<std::string_view, ESOArgType>& getKnownOptions() {
+		static const std::unordered_map<std::string_view, ESOArgType> options = [] {
+			std::unordered_map<std::string_view, ESOArgType> opts;
+			CSimpleOpt::SOption* allOptionArrays[] = { 
+				g_rgOptions,
+				g_rgAgentOptions,
+				g_rgBackupStartOptions,
+				g_rgBackupModifyOptions,
+				g_rgBackupStatusOptions,
+				g_rgBackupAbortOptions,
+				g_rgBackupCleanupOptions,
+				g_rgBackupDiscontinueOptions,
+				g_rgBackupWaitOptions,
+				g_rgBackupPauseOptions,
+				g_rgBackupExpireOptions,
+				g_rgBackupDeleteOptions,
+				g_rgBackupDescribeOptions,
+				g_rgBackupDumpOptions,
+				g_rgBackupTagsOptions,
+				g_rgBackupListOptions,
+				g_rgBackupQueryOptions,
+				g_rgRestoreOptions,
+				g_rgDBAgentOptions,
+				g_rgDBStartOptions,
+				g_rgDBStatusOptions,
+				g_rgDBSwitchOptions,
+				g_rgDBAbortOptions,
+				g_rgDBPauseOptions 
+			};
+
+			for (auto* arr : allOptionArrays) {
+				if (!arr)
+					continue;
+				for (int i = 0; !isSOEndOption(arr[i]); ++i) {
+					if (arr[i].pszArg) {
+						opts[arr[i].pszArg] = arr[i].nArgType;
+					}
+				}
+			}
+			return opts;
+		}();
+		return options;
+	}
+
+	void clear() {
+		commands.clear();
+		options.clear();
+		programName = "";
+	}
+
+	bool isCommand(std::string_view arg) const {
+		return !arg.empty() && arg[0] != '-';
+	}
+
+	bool isValidCommand(std::string_view command) const {
+		return validCommands.find(command) != validCommands.end();
+	}
+
+	bool processOption(int argc, char* argv[], int& i) {
+		const auto& knownOptions = getKnownOptions(); 
+		std::string_view arg = argv[i];
+		options.emplace_back(arg);
+
+		std::string_view optionName = arg;
+		std::string_view optionValue;
+		size_t equalPos = arg.find('=');
+
+		if (equalPos != std::string_view::npos) {
+			optionName = arg.substr(0, equalPos);
+			optionValue = arg.substr(equalPos + 1);
+		}
+
+		auto it = knownOptions.find(optionName);
+
+		// If not found, check for prefix options
+		if (it == knownOptions.end()) {
+			auto prefixIt = std::find_if(knownOptions.begin(), knownOptions.end(), 
+				[&optionName](const auto& pair) {
+					return isPrefixOption(pair.first) && optionName.size() >= pair.first.size() &&
+						optionName.compare(0, pair.first.size(), pair.first) == 0;
+				});
+			if (prefixIt != knownOptions.end()) {
+				it = prefixIt;
+			}
+		}
+
+		if (it == knownOptions.end()) {
+			fmt::print(stderr, "ERROR: Unknown option '{}'\n", optionName);
+			return false;
+		}
+
+		ESOArgType optionType = it->second;
+
+		// Handle options that require separate parameters
+		if (optionType == SO_REQ_SEP) {
+			if (equalPos != std::string_view::npos) {
+				// Parameter provided with '=', validate it's not empty
+				if (optionValue.empty()) {
+					fmt::print(stderr, "ERROR: Option '{}' requires a parameter\n", optionName);
+					return false;
+				}
+				// Value is already part of the option, nothing more to do
+			} else {
+				if (!processOptionParameter(argc, argv, i, optionName)) {
+					return false;
+				}
+			}
+		} else if (optionType == SO_NONE) {
+			if (equalPos != std::string_view::npos) {
+				fmt::print(stderr, "ERROR: Option '{}' does not take a parameter\n", optionName);
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	static bool isPrefixOption(std::string_view optName) {
+		return !optName.empty() && optName.back() == '-';
+	}
+
+	bool processOptionParameter(int argc, char* argv[], int& i, std::string_view option) {
+		if (i + 1 >= argc) {
+			fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
+			return false;
+		}
+
+		std::string_view nextArg = argv[i + 1];
+		if (!nextArg.empty() && nextArg[0] == '-') {
+			fmt::print(stderr, "ERROR: Option {} requires a parameter, but got {}\n", option, nextArg);
+			return false;
+		}
+
+		++i;
+		options.emplace_back(nextArg);
+		return true;
+	}
+};
+
+
 #ifndef EXCLUDE_MAIN_FUNCTION
 
-int main(int argc, const char* argv[]) {
+int main(int argc, char* argv[]) {
 	platformInit();
 
 	int status = FDB_EXIT_SUCCESS;
@@ -3655,6 +3548,10 @@ int main(int argc, const char* argv[]) {
 
 		std::unique_ptr<CSimpleOpt> args;
 		ParsedArgs parsedArgs;
+		if (!parsedArgs.parseArguments(argc, argv)) {
+			return FDB_EXIT_ERROR;
+		}
+		parsedArgs.getCSimpleOptArgs(argc, argv);
 
 		switch (programExe) {
 		case ProgramExe::AGENT:
@@ -3669,76 +3566,71 @@ int main(int argc, const char* argv[]) {
 				printBackupUsage(false);
 				return FDB_EXIT_ERROR;
 			} else {
-				if (!parsedArgs.parseArguments(argc, argv)) {
-					return FDB_EXIT_ERROR;
-				}
 				// Get the backup type
-				backupType = getBackupTypeFromCommands(parsedArgs.getCommands());
-
-				auto [optArgc, optArgv] = parsedArgs.getCSimpleOptArgs();
+				backupType = getBackupType(argv[1]);
 
 				// Create the appropriate simple opt
 				switch (backupType) {
 				case BackupType::START:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupStartOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupStartOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::STATUS:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupStatusOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupStatusOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::ABORT:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupAbortOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupAbortOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::CLEANUP:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupCleanupOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupCleanupOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::WAIT:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupWaitOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupWaitOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::DISCONTINUE:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupDiscontinueOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupDiscontinueOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::PAUSE:
 				case BackupType::RESUME:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupPauseOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupPauseOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::EXPIRE:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupExpireOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupExpireOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::DELETE_BACKUP:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupDeleteOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupDeleteOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::DESCRIBE:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupDescribeOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupDescribeOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::DUMP:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupDumpOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupDumpOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::LIST:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupListOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupListOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::QUERY:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupQueryOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupQueryOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::MODIFY:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupModifyOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupModifyOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::TAGS:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgBackupTagsOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgBackupTagsOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case BackupType::UNDEFINED:
 				default:
@@ -3754,35 +3646,30 @@ int main(int argc, const char* argv[]) {
 				printDBBackupUsage(false);
 				return FDB_EXIT_ERROR;
 			} else {
-				if (!parsedArgs.parseArguments(argc, argv)) {
-					return FDB_EXIT_ERROR;
-				}
 				// Get the backup type
-				dbType = getDBTypeFromCommands(parsedArgs.getCommands());
-
-				auto [optArgc, optArgv] = parsedArgs.getCSimpleOptArgs();
+				dbType = getDBType(argv[1]);
 				// Create the appropriate simple opt
 				switch (dbType) {
 				case DBType::START:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgDBStartOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgDBStartOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case DBType::STATUS:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgDBStatusOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgDBStatusOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case DBType::SWITCH:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgDBSwitchOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgDBSwitchOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case DBType::ABORT:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgDBAbortOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgDBAbortOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case DBType::PAUSE:
 				case DBType::RESUME:
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgDBPauseOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgDBPauseOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 					break;
 				case DBType::UNDEFINED:
 				default:
@@ -3797,17 +3684,13 @@ int main(int argc, const char* argv[]) {
 				printRestoreUsage(false);
 				return FDB_EXIT_ERROR;
 			} else {
-				if (!parsedArgs.parseArguments(argc, argv)) {
-					return FDB_EXIT_ERROR;
-				}
 				// Get the restore operation type
-				restoreType = getRestoreTypeFromCommands(parsedArgs.getCommands());
-				auto [optArgc, optArgv] = parsedArgs.getCSimpleOptArgs();
+				restoreType = getRestoreType(argv[1]);
 				if (restoreType == RestoreType::UNKNOWN) {
 					args = std::make_unique<CSimpleOpt>(argc, argv, g_rgOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 				} else {
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgRestoreOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgRestoreOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 				}
 			}
 			break;
@@ -3816,17 +3699,13 @@ int main(int argc, const char* argv[]) {
 				printFastRestoreUsage(false);
 				return FDB_EXIT_ERROR;
 			} else {
-				if (!parsedArgs.parseArguments(argc, argv)) {
-					return FDB_EXIT_ERROR;
-				}
 				// Get the restore operation type
-				restoreType = getRestoreTypeFromCommands(parsedArgs.getCommands());
-				auto [optArgc, optArgv] = parsedArgs.getCSimpleOptArgs();
+				restoreType = getRestoreType(argv[1]);
 				if (restoreType == RestoreType::UNKNOWN) {
 					args = std::make_unique<CSimpleOpt>(argc, argv, g_rgOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 				} else {
 					args = std::make_unique<CSimpleOpt>(
-						optArgc, optArgv, g_rgRestoreOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+						argc - 1, &argv[1], g_rgRestoreOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 				}
 			}
 			break;
@@ -5009,122 +4888,201 @@ int main(int argc, const char* argv[]) {
 #else // EXCLUDE_MAIN_FUNCTION
 
 int main() {
+
 	printf("=== Running ParsedArgs Tests ===\n");
 
-	auto testWithCommands = [](std::initializer_list<std::string_view> args,
-								const std::vector<std::string>& expectedCommands,
+	auto testWithCommands = [](std::vector<std::string> args,
+								const std::vector<std::string_view> expectedCommands,
 								const std::vector<std::string>& expectedOptions = {},
 								bool shouldSucceed = true,
-								const char* testName = "") -> bool 
+								const char* testName = "",
+								bool expectCSimpleOptions = false) -> bool
 	{
+		printf("\n--- Test: %s ---\n", testName);
+
 		ParsedArgs parser;
-		std::vector<const char*> c_args;
-		for (auto arg : args) {
-			c_args.push_back(arg.data());
+
+		std::vector<char*> argv;
+		for (auto& arg : args) 
+		{
+			argv.push_back(arg.data());
 		}
-		bool success = parser.parseArguments(args.size(), c_args.data());
+		argv.push_back(nullptr);
+
+		bool success = parser.parseArguments(args.size(), argv.data());
 		auto actualCommands = parser.getCommands();
 
-		auto [optArgc, optArgv] = parser.getCSimpleOptArgs();
+		if (success != shouldSucceed) {
+			printf("%s: FAIL - Expected %s but got %s\n",
+					testName,
+					shouldSucceed ? "success" : "failure",
+					success ? "success" : "failure");
+			return false;
+		}
+		if (!shouldSucceed) {
+			printf("PASS (%s) (expected failure)\n", testName);
+			return true;
+		}
+
+		// Check commands match
+		if (actualCommands != expectedCommands) {
+			printf("%s: FAIL - Command mismatch\n", testName);
+			printf("      Expected commands: ");
+			for (auto cmd : expectedCommands)
+				printf("'%s' ", cmd.data());
+			printf("\n      Actual commands: ");
+			for (auto cmd : actualCommands)
+				printf("'%s' ", cmd.data());
+			printf("\n");
+			return false;
+		}
+
+		// Test CSimpleOpt conversion
+		int optArgc = 0;
+		char** optArgv = argv.data();
+		parser.getCSimpleOptArgs(optArgc, optArgv);
+
+		printf("CSimpleOpt args: argc=%d\n", optArgc);
+		for (int i = 0; i < optArgc; i++) {
+			printf("  argv[%d] = '%s'\n", i, optArgv[i]);
+		}
+
 		std::vector<std::string> actualOptions;
 		for (int i = 1; i < optArgc; i++) {
 			actualOptions.push_back(optArgv[i]);
 		}
 
-		bool commandsMatch = (actualCommands == expectedCommands);
-		bool optionsMatch = (actualOptions == expectedOptions);
-		bool testPassed = (success == shouldSucceed) && (!shouldSucceed || (commandsMatch && optionsMatch));
+		if (actualOptions != expectedOptions) {
+			printf("%s: FAIL - Options mismatch\n", testName);
+			printf("      Expected options (%zu): ", expectedOptions.size());
+			for (const auto& opt : expectedOptions)
+				printf("'%s' ", opt.c_str());
+			printf("\n      Actual options (%zu): ", actualOptions.size());
+			for (const auto& opt : actualOptions)
+				printf("'%s' ", opt.c_str());
+			printf("\n");
+			return false;
+		}
 
-		printf("%s: %s\n", testName, testPassed ? "PASS" : "FAIL");
+		// Test with actual CSimpleOpt if expected
+		if (expectCSimpleOptions && !expectedOptions.empty()) {
+			try {
+				std::unique_ptr<CSimpleOpt> simpleOpt = std::make_unique<CSimpleOpt>(
+				    optArgc, optArgv, g_rgOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 
-		if (!testPassed) {
-			if (success != shouldSucceed) {
-				printf("      Expected %s but got %s\n",
-						shouldSucceed ? "success" : "failure",
-						success ? "success" : "failure");
-			}
-			if (shouldSucceed && !commandsMatch) {
-				printf("      Expected commands: ");
-				for (const auto& cmd : expectedCommands)
-					printf("'%s' ", cmd.c_str());
-				printf("\n      Actual commands: ");
-				for (const auto& cmd : actualCommands)
-					printf("'%s' ", cmd.c_str());
-				printf("\n");
-			}
-			if (shouldSucceed && !optionsMatch) {
-				printf("      Expected options: ");
-				for (const auto& opt : expectedOptions)
-					printf("'%s' ", opt.c_str());
-				printf("\n      Actual options: ");
-				for (const auto& opt : actualOptions)
-					printf("'%s' ", opt.c_str());
-				printf("\n");
+				ESOError lastError = SO_SUCCESS;
+				bool foundExpectedOptions = true;
+
+				while (simpleOpt->Next()) {
+					lastError = simpleOpt->LastError();
+					if (lastError != SO_SUCCESS) {
+						printf("CSimpleOpt parsing error: %d\n", lastError);
+						foundExpectedOptions = false;
+						break;
+					}
+
+					int optId = simpleOpt->OptionId();
+					printf("CSimpleOpt found option: id=%d, text='%s', arg='%s'\n",
+							optId,
+							simpleOpt->OptionText(),
+							simpleOpt->OptionArg() ? simpleOpt->OptionArg() : "null");
+				}
+
+				if (!foundExpectedOptions) {
+					printf("%s: FAIL - CSimpleOpt parsing failed\n", testName);
+					return false;
+				}
+			} catch (const std::exception& e) {
+				printf("%s: FAIL - CSimpleOpt exception: %s\n", testName, e.what());
+				return false;
 			}
 		}
 
-		return testPassed;
+		printf("PASS (%s)\n", testName);
+		return true;
 	};
 
+	printf("\n1) Basic Command Tests:\n");
 	bool allPassed = true;
+	allPassed &= testWithCommands({ "fdbbackup", "status" }, { "status" }, { "status" }, true, "1.1 Single command");
+	allPassed &= testWithCommands({ "fdbbackup" }, {}, {}, true, "1.2 No commands");
 
-	printf("\n Basic Command Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start" }, { "start" }, {}, true, "Single command");
-	allPassed &=
-		testWithCommands({ "fdbbackup", "start", "status" }, { "start", "status" }, {}, true, "Multiple valid commands");
-	allPassed &= testWithCommands({ "fdbbackup" }, {}, {}, true, "No commands");
-
-	printf("\n Command Positioning Tests:\n");
+	printf("\n2) Command Positioning Tests:\n");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "/cluster" },
-									{ "start" },
-									{ "--cluster-file", "/cluster" },
-									true,
-									"Command before options");
+								{ "start" },
+								{ "start", "--cluster-file", "/cluster" },
+								true,
+								"2.1 Command before options");
 	allPassed &= testWithCommands({ "fdbbackup", "--cluster-file", "/cluster", "start" },
-									{ "start" },
-									{ "--cluster-file", "/cluster" },
-									true,
-									"Command after options");
-	
-	printf("\n Option Parameter Tests:\n");
+								{ "start" },
+								{ "start", "--cluster-file", "/cluster" },
+								true,
+								"2.2 Command after options");
+	allPassed &= testWithCommands({ "fdbbackup", "--cluster-file", "/cluster", "list", "--json" },
+								{ "list" },
+								{ "list", "--cluster-file", "/cluster", "--json" },
+								true,
+								"2.3 Options before and after command");
+
+	printf("\n3) Option Parameter Tests:\n");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "-C", "/cluster" },
-									{ "start" },
-									{ "-C", "/cluster" },
-									true,
-									"Short option with parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--timeout", "30", "--retries", "5" },
-									{ "start" },
-									{ "--timeout", "30", "--retries", "5" },
-									true,
-									"Multiple options with parameters");
+								{ "start" },
+								{ "start", "-C", "/cluster" },
+								true,
+								"3.1 Short option with parameter");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--snapshot-interval", "30" },
+								{ "start" },
+								{ "start", "--snapshot-interval", "30" },
+								true,
+								"3.2 Option with parameter");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--logdir", "/logs", "--trace-format", "json" },
-									{ "start" },
-									{ "--logdir", "/logs", "--trace-format", "json" },
-									true,
-									"Mixed options");
+								{ "start" },
+								{ "start", "--logdir", "/logs", "--trace-format", "json" },
+								true,
+								"3.3 Multiple options with parameters");
 
-	printf("\n Prefix Option Test:\n");
+	printf("\n4) Equal Sign Parameter Tests:\n");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file=/cluster" },
+								{ "start" },
+								{ "start", "--cluster-file=/cluster" },
+								true,
+								"4.1 Option with equals");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
+								{ "start" },
+								{ "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
+								true,
+								"4.2 Multiple options with equals and space	delimiters");
+
+	printf("\n5) Prefix Option Tests:\n");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--knob-max_workers", "10" },
-									{ "start" },
-									{ "--knob-max_workers", "10" },
-									true,
-									"Knob option");
+								{ "start" },
+								{ "start", "--knob-max_workers", "10" },
+								true,
+								"5.1 Knob option with parameter");
 
-	printf("\n Top level options Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "--version" }, {}, { "--version" }, true, "Only version flag");
+	printf("\n6) Global flag options and CSimpleOpt Tests:\n");
+	allPassed &= testWithCommands({ "fdbbackup", "--version", "-h" }, {}, {"--version", "-h"}, true, "6.1 Version flag", true);
 
-	printf("\n Error Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--unknown-option" }, {}, {}, false, "Unknown option");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file" }, {}, {}, false, "Missing parameter");
-	allPassed &=
-	    testWithCommands({ "fdbbackup", "start", "--cluster-file", "--help" }, {}, {}, false, "Option as parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "--cluster-file" }, {}, {}, false, "Missing parameter at end");
-	allPassed &= testWithCommands({ "fdbbackup", "invalidcmd" }, {}, {}, false, "Invalid command");
+	printf("\n7) Error Tests:\n");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--unknown-option" }, {}, {}, false, "7.1 Unknown option");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file" }, {}, {}, false, "7.2 Missing parameter");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "--help" }, {}, {}, false, "7.3 Option as parameter");
+	allPassed &= testWithCommands({ "fdbbackup", "invalidcmd" }, {}, {}, false, "7.4 Invalid command");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {}, {}, false, "7.5 Empty option with equals");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "--log=10" }, {}, {}, false, "7.6 Does not take a parameter");
 
-	printf("\n Valid Commands Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "describe" }, { "describe" }, {}, true, "Describe command");
-	allPassed &= testWithCommands({ "fdbbackup", "list" }, { "list" }, {}, true, "List command");
-	
+	printf("\n8) Complex Scenario Tests:\n");
+	allPassed &= testWithCommands({ "fdbbackup", "start", "-C", "/cluster", "--snapshot-interval", "120", "--tagname", "mytag" },
+								{ "start" },
+								{ "start", "-C", "/cluster", "--snapshot-interval", "120", "--tagname", "mytag" },
+								true,
+								"8.1 Complex scenario");
+	allPassed &= testWithCommands({ "fdbbackup", "describe", "--json", "--cluster-file", "fdb.cluster" },
+								{ "describe" },
+								{ "describe", "--json", "--cluster-file", "fdb.cluster" },
+								true,
+								"8.2 Describe with options");
+
 	printf("\n=== %s ===\n", allPassed ? "All tests PASSED!" : "Some tests FAILED!");
 	return allPassed ? 0 : 1;
 }
