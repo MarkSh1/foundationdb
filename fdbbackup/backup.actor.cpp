@@ -3307,11 +3307,12 @@ public:
 	ParsedArgs(ParsedArgs&&) = delete;
 	ParsedArgs& operator=(ParsedArgs&&) = delete;
 
-	void getCSimpleOptArgs(int& argc, char**& argv) const {
+	void buildArgs(int& argc, char**& argv) const {
+
 		static std::vector<char*> argvStorage;
 		argc = 1; // program name
 
-		if (!commands.empty()) 
+		if (!parameters.empty()) 
 		{
 			argc += 1; // command
 		}
@@ -3323,12 +3324,12 @@ public:
 		int i = 0;
 		argvStorage[i++] = const_cast<char*>(programName.data());
 
-		if (!commands.empty()){
-			argvStorage[i++] = const_cast<char*>(commands[0].data());
+		if (!parameters.empty()){
+			argvStorage[i++] = const_cast<char*>(parameters[0]);
 		}
 
 		for (size_t j = 0; j < options.size() && i < argc; ++j) {
-			argvStorage[i++] = const_cast<char*>(options[j].data());
+			argvStorage[i++] = const_cast<char*>(options[j]);
 		}
 		argvStorage[argc] = nullptr;
 
@@ -3336,41 +3337,30 @@ public:
 	}
 
 	bool parseArguments(int argc, char* argv[]) {
-		clear();
 		if (argc < 1) return false;
 
 		programName = argv[0];
 
 		for (int i = 1; i < argc; ++i) {
-			std::string_view arg = argv[i];
+			const char* arg = argv[i];
 
 			if (isCommand(arg)) {
-				if (!isValidCommand(arg)) {
-					fmt::print(stderr, "ERROR: Unknown command '{}'\n", arg);
+				parameters.emplace_back(arg);
+			} else {
+				if (!processOption(argc, argv, i)) {
 					return false;
 				}
-				commands.emplace_back(arg);
-				continue;
-			}
-			if (!processOption(argc, argv, i)) {
-				return false;
 			}
 		}
 		return true;
 	}
 
-	const std::vector<std::string_view>& getCommands() const { return commands; }
-
+	const std::vector<const char *>& getCommands() const { return parameters; }
+	
 private:
-	std::vector<std::string_view> commands;
-	std::vector<std::string_view> options;
+	std::vector<const char *> parameters;
+	std::vector<const char *> options;
 	std::string_view programName = "";
-
-	static inline const std::unordered_set <std::string_view> validCommands {
-		"start", "status", "abort", "wait", "discontinue", 
-		"pause", "resume", "expire", "delete", "describe", 
-		"list", "query", "dump", "cleanup", "tags", "modify"
-	};
 
 	static bool isSOEndOption(const CSimpleOpt::SOption& opt) {
 		static constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
@@ -3421,32 +3411,22 @@ private:
 		return options;
 	}
 
-	void clear() {
-		commands.clear();
-		options.clear();
-		programName = "";
-	}
-
-	bool isCommand(std::string_view arg) const {
-		return !arg.empty() && arg[0] != '-';
-	}
-
-	bool isValidCommand(std::string_view command) const {
-		return validCommands.find(command) != validCommands.end();
+	bool isCommand(const char* arg) const {
+		return arg && *arg != '-';
 	}
 
 	bool processOption(int argc, char* argv[], int& i) {
 		const auto& knownOptions = getKnownOptions(); 
-		std::string_view arg = argv[i];
+		const char* arg = argv[i];
 		options.emplace_back(arg);
 
 		std::string_view optionName = arg;
 		std::string_view optionValue;
-		size_t equalPos = arg.find('=');
+		size_t equalPos = optionName.find('=');
 
 		if (equalPos != std::string_view::npos) {
-			optionName = arg.substr(0, equalPos);
-			optionValue = arg.substr(equalPos + 1);
+			optionValue = optionName.substr(equalPos + 1);
+			optionName = optionName.substr(0, equalPos);
 		}
 
 		auto it = knownOptions.find(optionName);
@@ -3504,8 +3484,8 @@ private:
 			return false;
 		}
 
-		std::string_view nextArg = argv[i + 1];
-		if (!nextArg.empty() && nextArg[0] == '-') {
+		const char* nextArg = argv[i + 1];
+		if (nextArg && *nextArg == '-') {
 			fmt::print(stderr, "ERROR: Option {} requires a parameter, but got {}\n", option, nextArg);
 			return false;
 		}
@@ -3551,7 +3531,7 @@ int main(int argc, char* argv[]) {
 		if (!parsedArgs.parseArguments(argc, argv)) {
 			return FDB_EXIT_ERROR;
 		}
-		parsedArgs.getCSimpleOptArgs(argc, argv);
+		parsedArgs.buildArgs(argc, argv);
 
 		switch (programExe) {
 		case ProgramExe::AGENT:
@@ -4892,7 +4872,7 @@ int main() {
 	printf("=== Running ParsedArgs Tests ===\n");
 
 	auto testWithCommands = [](std::vector<std::string> args,
-								const std::vector<std::string_view> expectedCommands,
+								const std::vector<std::string>& expectedCommands,
 								const std::vector<std::string>& expectedOptions = {},
 								bool shouldSucceed = true,
 								const char* testName = "",
@@ -4920,19 +4900,26 @@ int main() {
 			return false;
 		}
 		if (!shouldSucceed) {
-			printf("PASS (%s) (expected failure)\n", testName);
+			printf("\n--- Test PASSED: %s (expected failure)---\n", testName);
 			return true;
 		}
 
 		// Check commands match
-		if (actualCommands != expectedCommands) {
+
+		std::vector<std::string> actualCommandsStr;
+		for (auto cmd: actualCommands) {
+			actualCommandsStr.push_back(cmd);
+		}
+
+		if (actualCommandsStr != expectedCommands) 
+		{
 			printf("%s: FAIL - Command mismatch\n", testName);
 			printf("      Expected commands: ");
 			for (auto cmd : expectedCommands)
-				printf("'%s' ", cmd.data());
+				printf("'%s' ", cmd.c_str());
 			printf("\n      Actual commands: ");
 			for (auto cmd : actualCommands)
-				printf("'%s' ", cmd.data());
+				printf("'%s' ", cmd);
 			printf("\n");
 			return false;
 		}
@@ -4940,9 +4927,9 @@ int main() {
 		// Test CSimpleOpt conversion
 		int optArgc = 0;
 		char** optArgv = argv.data();
-		parser.getCSimpleOptArgs(optArgc, optArgv);
+		parser.buildArgs(optArgc, optArgv);
 
-		printf("CSimpleOpt args: argc=%d\n", optArgc);
+		printf("args after parse : argc=%d\n", optArgc);
 		for (int i = 0; i < optArgc; i++) {
 			printf("  argv[%d] = '%s'\n", i, optArgv[i]);
 		}
@@ -4998,7 +4985,7 @@ int main() {
 			}
 		}
 
-		printf("PASS (%s)\n", testName);
+		printf("\n--- Test PASSED: %s ---\n", testName);
 		return true;
 	};
 
@@ -5006,6 +4993,8 @@ int main() {
 	bool allPassed = true;
 	allPassed &= testWithCommands({ "fdbbackup", "status" }, { "status" }, { "status" }, true, "1.1 Single command");
 	allPassed &= testWithCommands({ "fdbbackup" }, {}, {}, true, "1.2 No commands");
+	allPassed &= testWithCommands({ "fdbbackup", "unknown" }, { "unknown" }, { "unknown" }, true, "1.3 Unknown command");
+	allPassed &= testWithCommands({ "fdbbackup", "unknown1", "unknown2" }, { "unknown1", "unknown2" }, { "unknown1" }, true, "1.4 Several unknown commands");
 
 	printf("\n2) Command Positioning Tests:\n");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "/cluster" },
@@ -5067,7 +5056,6 @@ int main() {
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--unknown-option" }, {}, {}, false, "7.1 Unknown option");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file" }, {}, {}, false, "7.2 Missing parameter");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "--help" }, {}, {}, false, "7.3 Option as parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "invalidcmd" }, {}, {}, false, "7.4 Invalid command");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {}, {}, false, "7.5 Empty option with equals");
 	allPassed &= testWithCommands({ "fdbbackup", "start", "--log=10" }, {}, {}, false, "7.6 Does not take a parameter");
 
