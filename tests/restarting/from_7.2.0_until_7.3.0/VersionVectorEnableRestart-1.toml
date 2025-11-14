@@ -1,5 +1,5 @@
 [configuration]
-encryptModes = ['disabled']
+disableEncryption = true
 
 [[knobs]]
 enable_version_vector = false
