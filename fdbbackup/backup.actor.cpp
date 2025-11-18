@@ -3323,11 +3323,10 @@ public:
 			const char* arg = argv[i];
 
 			if (isOptions(arg)) {
-				parameters.emplace_back(arg);
-			} else {
-				if (!processOption(argc, argv, i, options)) {
+				if (!processOption(argc, argv, i, options))
 					return false;
-				}
+			} else {
+				parameters.emplace_back(arg);
 			}
 		}
 
@@ -3339,7 +3338,7 @@ public:
 private:
 
 	mutable std::vector<const char*> argvStorage;
-	CSimpleOpt::SOption* allOptionArrays[24] = { 
+	static constexpr CSimpleOpt::SOption* const allOptionArrays[24] = { 
 		g_rgOptions,
 		g_rgAgentOptions,
 		g_rgBackupStartOptions,
@@ -3397,7 +3396,7 @@ private:
 	}
 
 	static constexpr bool isOptions(const char* arg) {
-		return arg && *arg != '-';
+		return arg && *arg == '-';
 	}
 
 	bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
