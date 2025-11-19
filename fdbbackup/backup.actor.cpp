@@ -81,7 +81,6 @@
 #include "SimpleOpt/SimpleOpt.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
-
 // Type of program being executed
 enum class ProgramExe { AGENT, BACKUP, RESTORE, FASTRESTORE_TOOL, DR_AGENT, DB_BACKUP, UNDEFINED };
 
@@ -3307,12 +3306,7 @@ public:
 	ParsedArgs(ParsedArgs&&) = delete;
 	ParsedArgs& operator=(ParsedArgs&&) = delete;
 
-	void buildArgs(int& argc, const char**& argv) const {
-		argc = static_cast<int>(argvStorage.size() - 1); // exclude nullptr termination
-		argv = argvStorage.data();
-	}
-
-	bool parseArguments(int argc, const char* argv[]) {
+	bool reorderArguments(int argc, const char* argv[], int& newArgc, const char**& newArgV) {
 
 		std::vector<const char *> parameters;
 		std::vector<const char *> options;
@@ -3331,6 +3325,7 @@ public:
 		}
 
 		buildArgvStorage(argv, parameters, options);
+		getArgs(newArgc, newArgV);
 
 		return true;
 	}
@@ -3338,7 +3333,7 @@ public:
 private:
 
 	mutable std::vector<const char*> argvStorage;
-	static constexpr CSimpleOpt::SOption* const allOptionArrays[24] = { 
+	static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { 
 		g_rgOptions,
 		g_rgAgentOptions,
 		g_rgBackupStartOptions,
@@ -3365,34 +3360,31 @@ private:
 		g_rgDBPauseOptions 
 	};
 
+	// Checks if the given option is the end marker of an options array in CSimpleOpt.
+	// The last option in an array is always the END_MARKER = SO_END_OF_OPTIONS.
 	static constexpr bool isSOEndOption(const CSimpleOpt::SOption& opt) {
 		constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 		return opt.nId == END_MARKER.nId && opt.pszArg == END_MARKER.pszArg && opt.nArgType == END_MARKER.nArgType;
 	}
 
+	void getArgs(int& argc, const char**& argv) const {
+		argc = static_cast<int>(argvStorage.size() - 1); // exclude nullptr termination
+		argv = argvStorage.data();
+	}
+
 	void buildArgvStorage(const char* originalArgv[],
 						const std::vector<const char*>& parameters,
 						const std::vector<const char*>& options) {
-		int argc = 1; // program name
-		if (!parameters.empty()) {
-			argc += 1; // command
-		}
-		argc += options.size(); // Add all options and their parameters
+		argvStorage.reserve(1 + (!parameters.empty() ? 1 : 0) + options.size() + 1); // program name + subcommand + options + nullptr
 
-		argvStorage.resize(argc + 1); // +1 for nullptr termination
-
-		int i = 0;
-		argvStorage[i++] = originalArgv[0]; // program name
+		argvStorage.push_back(originalArgv[0]); // program name
 
 		if (!parameters.empty()) {
-			argvStorage[i++] = parameters[0]; // subcommand
+			argvStorage.push_back(parameters[0]); // subcommand
 		}
+		argvStorage.insert(argvStorage.end(), options.begin(), options.end());
 
-		for (size_t j = 0; j < options.size() && i < argc; ++j) {
-			argvStorage[i++] = options[j]; // options and their values
-		}
-
-		argvStorage[argc] = nullptr; // nullptr termination
+		argvStorage.push_back(nullptr); // nullptr termination
 	}
 
 	static constexpr bool isOptions(const char* arg) {
@@ -3400,50 +3392,46 @@ private:
 	}
 
 	bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
-		const char* arg = argv[i];
-		options.emplace_back(arg);
+		std::string_view option = argv[i];
+		options.emplace_back(option.data());
 
-		std::string_view optionName = arg;
-		size_t equalPos = optionName.find('=');
+		size_t equalPos = option.find('=');
 
 		if (equalPos != std::string_view::npos) {
-			optionName = optionName.substr(0, equalPos);
+			option = option.substr(0, equalPos);
 		}
 
 		for (auto* opt : allOptionArrays) {
-			if (!opt)
-				continue;
-
 			for (int j = 0; !isSOEndOption(opt[j]); ++j) {
 				const char* knownOpt = opt[j].pszArg;
+				size_t knownOptLen = strlen(knownOpt);
+
 				if (!knownOpt)
 					continue;
 
-				if (optionName == knownOpt || (isPrefixOption(knownOpt) && optionName.size() >= strlen(knownOpt) &&
-				                               optionName.compare(0, strlen(knownOpt), knownOpt) == 0)) {
+				if (option == knownOpt || (isPrefixOption(knownOpt) && option.size() >= knownOptLen &&
+				                           option.compare(0, knownOptLen, knownOpt) == 0)) {
 					if (opt[j].nArgType == SO_REQ_SEP && equalPos == std::string_view::npos) {
-						return processOptionParameter(argc, argv, i, optionName, options);
+						++i;
+
+						if (i >= argc) {
+							fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
+							return false;
+						}
+
+						options.emplace_back(argv[i]);
+						return true;
 					}
 					return true;
 				}
 			}
 		}
-		fmt::print(stderr, "ERROR: Unknown option '{}'\n", optionName);
+		fmt::print(stderr, "ERROR: Unknown option '{}'\n", option);
 		return false;
 	}
 
 	static constexpr bool isPrefixOption(std::string_view optName) {
 		return !optName.empty() && optName.back() == '-';
-	}
-
-	bool processOptionParameter(int argc, const char* argv[], int& i, std::string_view option, std::vector<const char *>& options) {
-		++i;
-		if (i >= argc) {
-			fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
-			return false;
-		}
-		options.emplace_back(argv[i]);
-		return true;
 	}
 };
 
@@ -3479,10 +3467,14 @@ int main(int argc, char* argv[]) {
 
 		std::unique_ptr<CSimpleOpt> args;
 		ParsedArgs parsedArgs;
-		if (!parsedArgs.parseArguments(argc, const_cast<const char**>(argv))) {
+
+		const char** newArgV{};
+
+		if (!parsedArgs.reorderArguments(argc, const_cast<const char**>(argv), argc, newArgV)) {
 			return FDB_EXIT_ERROR;
 		}
-		parsedArgs.buildArgs(argc, const_cast<const char**&>(argv));
+
+		argv = const_cast<char**>(newArgV); 
 
 		switch (programExe) {
 		case ProgramExe::AGENT:
@@ -4837,7 +4829,9 @@ int main() {
 		}
 		argv.push_back(nullptr);
 
-		bool success = parser.parseArguments(args.size(), argv.data());
+		int argcNew = 0;
+		const char** argvNew = {};
+		bool success = parser.reorderArguments(args.size(), argv.data(), argcNew, argvNew);
 
 		if (success != shouldSucceed) {
 			printf("%s: FAIL - Expected %s but got %s\n",
@@ -4852,18 +4846,9 @@ int main() {
 		}
 
 		// Test CSimpleOpt conversion
-		int optArgc = 0;
-		const char** optArgv = argv.data();
-		parser.buildArgs(optArgc, optArgv);
-
-		printf("args after parse : argc=%d\n", optArgc);
-		for (int i = 0; i < optArgc; i++) {
-			printf("  argv[%d] = '%s'\n", i, optArgv[i]);
-		}
-
 		std::vector<std::string> actualOptions;
-		for (int i = 1; i < optArgc; i++) {
-			actualOptions.push_back(optArgv[i]);
+		for (int i = 1; i < argcNew; i++) {
+			actualOptions.push_back(argvNew[i]);
 		}
 
 		if (actualOptions != expectedOptions) {
@@ -4882,7 +4867,7 @@ int main() {
 		if (expectCSimpleOptions && !expectedOptions.empty()) {
 			try {
 				std::unique_ptr<CSimpleOpt> simpleOpt = std::make_unique<CSimpleOpt>(
-				    optArgc, const_cast<char**>(optArgv), g_rgOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
+				    argcNew, const_cast<char**>(argvNew), g_rgOptions, SO_O_EXACT | SO_O_HYPHEN_TO_UNDERSCORE);
 
 				ESOError lastError = SO_SUCCESS;
 				bool foundExpectedOptions = true;
