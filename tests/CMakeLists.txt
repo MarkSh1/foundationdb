@@ -414,26 +414,26 @@ if(WITH_PYTHON)
     TEST_FILES restarting/from_7.3.50/BlobGranuleRestartLarge-1.toml
     restarting/from_7.3.50/BlobGranuleRestartLarge-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/SnapCycleRestart-1.toml
-    restarting/from_7.3.50/SnapCycleRestart-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/SnapCycleRestart-1.toml
+    restarting/from_7.3.50_until_7.4.0/SnapCycleRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/SnapTestAttrition-1.toml
-    restarting/from_7.3.50/SnapTestAttrition-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/SnapTestAttrition-1.toml
+    restarting/from_7.3.50_until_7.4.0/SnapTestAttrition-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/SnapTestSimpleRestart-1.toml
-    restarting/from_7.3.50/SnapTestSimpleRestart-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/SnapTestSimpleRestart-1.toml
+    restarting/from_7.3.50_until_7.4.0/SnapTestSimpleRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/SnapTestRestart-1.toml
-    restarting/from_7.3.50/SnapTestRestart-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/SnapTestRestart-1.toml
+    restarting/from_7.3.50_until_7.4.0/SnapTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/ClientTransactionProfilingCorrectness-1.toml
-    restarting/from_7.3.50/ClientTransactionProfilingCorrectness-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/ClientTransactionProfilingCorrectness-1.toml
+    restarting/from_7.3.50_until_7.4.0/ClientTransactionProfilingCorrectness-2.toml)
   add_fdb_test(
     TEST_FILES restarting/from_7.3.50/CycleTestRestart-1.toml
     restarting/from_7.3.50/CycleTestRestart-2.toml)
   add_fdb_test(
-    TEST_FILES restarting/from_7.3.50/StorefrontTestRestart-1.toml
-    restarting/from_7.3.50/StorefrontTestRestart-2.toml)
+    TEST_FILES restarting/from_7.3.50_until_7.4.0/StorefrontTestRestart-1.toml
+    restarting/from_7.3.50_until_7.4.0/StorefrontTestRestart-2.toml)
   add_fdb_test(
     TEST_FILES restarting/from_7.3.50/ClientMetricRestart-1.toml
     restarting/from_7.3.50/ClientMetricRestart-2.toml)

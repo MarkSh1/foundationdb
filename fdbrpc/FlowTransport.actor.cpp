@@ -315,6 +315,16 @@ public:
 		countConnEstablished.init("Net2.CountConnEstablished"_sr);
 		countConnClosedWithError.init("Net2.CountConnClosedWithError"_sr);
 		countConnClosedWithoutError.init("Net2.CountConnClosedWithoutError"_sr);
+		countConnIncompatible.init("Net2.CountConnIncompatible"_sr);
+		countConnIncompatibleWithOldClient.init("Net2.CountConnIncompatibleWithOldClient"_sr);
+		countConnHandshakeAccepted.init("Net2.CountConnHandshakeAccepted"_sr);
+		countConnHandshakeRequested.init("Net2.CountConnHandshakeRequested"_sr);
+		countIncomingConnRequested.init("Net2.CountIncomingConnRequested"_sr);
+		countIncomingConnAccepted.init("Net2.CountIncomingConnAccepted"_sr);
+		countOutgoingConnHandshakeComplete.init("Net2.CountOutgoingConnHandshakeComplete"_sr);
+		countOutgoingConnHandshakeRequested.init("Net2.CountOutgoingConnHandshakeRequested"_sr);
+		countIncomingConnectionTimedout.init("Net2.CountIncomingConnectionTimedout"_sr);
+		countIncomingConnConnected.init("Net2.CountIncomingConnConnected"_sr);
 	}
 
 	Reference<struct Peer> getPeer(NetworkAddress const& address);
@@ -343,6 +353,16 @@ public:
 	Int64MetricHandle countConnEstablished;
 	Int64MetricHandle countConnClosedWithError;
 	Int64MetricHandle countConnClosedWithoutError;
+	Int64MetricHandle countConnIncompatible;
+	Int64MetricHandle countConnIncompatibleWithOldClient;
+	Int64MetricHandle countConnHandshakeAccepted;
+	Int64MetricHandle countConnHandshakeRequested;
+	Int64MetricHandle countIncomingConnRequested;
+	Int64MetricHandle countIncomingConnAccepted;
+	Int64MetricHandle countOutgoingConnHandshakeComplete;
+	Int64MetricHandle countOutgoingConnHandshakeRequested;
+	Int64MetricHandle countIncomingConnectionTimedout;
+	Int64MetricHandle countIncomingConnConnected;
 
 	std::map<NetworkAddress, std::pair<uint64_t, double>> incompatiblePeers;
 	AsyncTrigger incompatiblePeersChanged;
@@ -486,6 +506,7 @@ ACTOR Future<Void> pingLatencyLogger(TransportData* self) {
 			if (peer && (peer->pingLatencies.getPopulationSize() >= 10 || peer->connectFailedCount > 0 ||
 			             peer->timeoutCount > 0)) {
 				TraceEvent("PingLatency")
+				    .suppressFor(30.0)
 				    .detail("Elapsed", now() - peer->lastLoggedTime)
 				    .detail("PeerAddr", lastAddress)
 				    .detail("PeerAddress", lastAddress)
@@ -818,7 +839,9 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 						when(Reference<IConnection> _conn =
 						         wait(INetworkConnections::net()->connect(self->destination))) {
 							conn = _conn;
+							self->transport->countOutgoingConnHandshakeRequested++;
 							wait(conn->connectHandshake());
+							self->transport->countOutgoingConnHandshakeComplete++;
 							self->connectLatencies.addSample(now() - self->lastConnectTime);
 							if (FlowTransport::isClient()) {
 								IFailureMonitor::failureMonitor().setStatus(self->destination, FailureStatus(false));
@@ -1504,11 +1527,12 @@ ACTOR static Future<Void> connectionReader(TransportData* transport,
 								    now() + FLOW_KNOBS->CONNECTION_ID_TIMEOUT;
 							}
 							compatible = false;
+							transport->countConnIncompatible++;
 							if (!protocolVersion.hasInexpensiveMultiVersionClient()) {
 								if (peer) {
 									peer->protocolVersion->set(protocolVersion);
 								}
-
+								transport->countConnIncompatibleWithOldClient++;
 								// Older versions expected us to hang up. It may work even if we don't hang up here, but
 								// it's safer to keep the old behavior.
 								throw incompatible_protocol_version();
@@ -1607,7 +1631,9 @@ ACTOR static Future<Void> connectionIncoming(TransportData* self, Reference<ICon
 	entry.time = now();
 	entry.addr = conn->getPeerAddress();
 	try {
+		self->countConnHandshakeRequested++;
 		wait(conn->acceptHandshake());
+		self->countConnHandshakeAccepted++;
 		state Promise<Reference<Peer>> onConnected;
 		state Future<Void> reader = connectionReader(self, conn, Reference<Peer>(), onConnected);
 		if (FLOW_KNOBS->LOG_CONNECTION_ATTEMPTS_ENABLED) {
@@ -1624,9 +1650,11 @@ ACTOR static Future<Void> connectionIncoming(TransportData* self, Reference<ICon
 			}
 			when(wait(delayJittered(FLOW_KNOBS->CONNECTION_MONITOR_TIMEOUT))) {
 				CODE_PROBE(true, "Incoming connection timed out");
+				self->countIncomingConnectionTimedout++;
 				throw timed_out();
 			}
 		}
+		self->countIncomingConnConnected++;
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled) {
 			TraceEvent("IncomingConnectionError", conn->getDebugID())
@@ -1657,7 +1685,9 @@ ACTOR static Future<Void> listen(TransportData* self, NetworkAddress listenAddr)
 	state uint64_t connectionCount = 0;
 	try {
 		loop {
+			self->countIncomingConnRequested++;
 			Reference<IConnection> conn = wait(listener->accept());
+			self->countIncomingConnAccepted++;
 			if (conn) {
 				TraceEvent("ConnectionFrom", conn->getDebugID())
 				    .suppressFor(1.0)
