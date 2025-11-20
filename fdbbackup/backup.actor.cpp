@@ -3306,8 +3306,8 @@ public:
 	ParsedArgs(ParsedArgs&&) = delete;
 	ParsedArgs& operator=(ParsedArgs&&) = delete;
 
-	bool reorderArguments(int argc, const char* argv[], int& newArgc, const char**& newArgV) {
-
+	static bool reorderArguments(int argc, const char* argv[], int& newArgc, char**& newArgV) {
+		static std::vector<const char*> argvStorage;
 		std::vector<const char *> parameters;
 		std::vector<const char *> options;
 
@@ -3324,18 +3324,20 @@ public:
 			}
 		}
 
-		buildArgvStorage(argv, parameters, options);
-		newArgc = static_cast<int>(argvStorage.size());
+		argvStorage.reserve(parameters.size() + options.size() + 1); // +1 for null terminator
+		argvStorage = parameters;
+		argvStorage.insert(argvStorage.end(), options.begin(), options.end());
 		
+		newArgc = static_cast<int>(argvStorage.size());
+
 		argvStorage.push_back(nullptr); // Null-terminate the argv array
-		newArgV = argvStorage.data();
+		newArgV = const_cast<char**>(argvStorage.data());
 
 		return true;
 	}
 
 private:
 
-	mutable std::vector<const char*> argvStorage;
 	static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { 
 		g_rgOptions,
 		g_rgAgentOptions,
@@ -3368,14 +3370,6 @@ private:
 	static constexpr bool isSOEndOption(const CSimpleOpt::SOption& opt) {
 		constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 		return opt.nId == END_MARKER.nId && opt.pszArg == END_MARKER.pszArg && opt.nArgType == END_MARKER.nArgType;
-	}
-
-	void buildArgvStorage(const char* originalArgv[],
-						const std::vector<const char*>& parameters,
-						const std::vector<const char*>& options) {
-		argvStorage.reserve(parameters.size() + options.size());
-		argvStorage = parameters;
-		argvStorage.insert(argvStorage.end(), options.begin(), options.end());
 	}
 
 	static constexpr bool isOptions(const char* arg) {
@@ -3459,7 +3453,7 @@ int main(int argc, char* argv[]) {
 		std::unique_ptr<CSimpleOpt> args;
 		ParsedArgs parsedArgs;
 
-		const char** newArgV{};
+		char** newArgV{};
 		int newArgC{};
 
 		if (!parsedArgs.reorderArguments(argc, const_cast<const char**>(argv), newArgC, newArgV)) {
@@ -4820,7 +4814,7 @@ int main() {
 		argv.push_back(nullptr);
 
 		int argcNew {};
-		const char** argvNew {};
+		char** argvNew {};
 		bool success = parser.reorderArguments(args.size(), argv.data(), argcNew, argvNew);
 
 		printf("DEBUG: argcNew: %d\n", argcNew);
