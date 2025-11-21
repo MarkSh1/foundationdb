@@ -3298,8 +3298,7 @@ Optional<Database> connectToCluster(std::string const& clusterFile,
 	return db;
 };
 
-static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
-	static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
+static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
 	                                                              g_rgAgentOptions,
 	                                                              g_rgBackupStartOptions,
 	                                                              g_rgBackupModifyOptions,
@@ -3323,6 +3322,8 @@ static bool processOption(int argc, const char* argv[], int& i, std::vector<cons
 	                                                              g_rgDBSwitchOptions,
 	                                                              g_rgDBAbortOptions,
 	                                                              g_rgDBPauseOptions };
+
+static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
 	std::string_view option = argv[i];
 
 	options.emplace_back(option.data());
@@ -3331,34 +3332,27 @@ static bool processOption(int argc, const char* argv[], int& i, std::vector<cons
 	if (equalPos != std::string_view::npos) {
 		option = option.substr(0, equalPos);
 	}
-
-	auto isPrefixOption = [](std::string_view optName) -> bool { return !optName.empty() && optName.back() == '-'; };
-
 	// Checks if the given option is the end marker of an options array in CSimpleOpt.
 	// The last option in an array is always the END_MARKER = SO_END_OF_OPTIONS.
-	auto isSOEndOption = [](const CSimpleOpt::SOption& opt) -> bool {
-		constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
-		return opt.nId == END_MARKER.nId && opt.pszArg == END_MARKER.pszArg && opt.nArgType == END_MARKER.nArgType;
-	};
+	constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 
 	for (auto* opt : allOptionArrays) {
-		for (int j = 0; !isSOEndOption(opt[j]); ++j) {
+		for (int j = 0; opt[j].pszArg != END_MARKER.pszArg; ++j) {
 			const char* knownOpt = opt[j].pszArg;
-
 			size_t knownOptLen = strlen(knownOpt);
+			bool isPrefixOpt = knownOptLen > 0 && knownOpt[knownOptLen - 1] == '-';
 
-			if (option == knownOpt || (isPrefixOption(knownOpt) && option.size() >= knownOptLen &&
-			                           option.compare(0, knownOptLen, knownOpt) == 0)) {
+			if (option == knownOpt || (isPrefixOpt && 
+									   option.size() >= knownOptLen &&
+									   option.compare(0, knownOptLen, knownOpt) == 0))
+			{
 				if (opt[j].nArgType == SO_REQ_SEP && equalPos == std::string_view::npos) {
 					++i;
-
 					if (i >= argc) {
 						fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
 						return false;
 					}
-
 					options.emplace_back(argv[i]);
-					return true;
 				}
 				return true;
 			}
