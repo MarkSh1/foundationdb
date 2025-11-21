@@ -83,7 +83,7 @@ jobs:
             ${{needs.calc_ver.outputs.release_flag}} \
             ${{ matrix.parallel }}
 
-          echo "=== Disk space after build ==="
+          echo "=== Disk space after build and cpack ==="
           df -h
 
       # - name: Minimal tests
