@@ -3298,128 +3298,106 @@ Optional<Database> connectToCluster(std::string const& clusterFile,
 	return db;
 };
 
-class ParsedArgs {
-public:
-	ParsedArgs() = default;
-	ParsedArgs(const ParsedArgs&) = delete;
-	ParsedArgs& operator=(const ParsedArgs&) = delete;
-	ParsedArgs(ParsedArgs&&) = delete;
-	ParsedArgs& operator=(ParsedArgs&&) = delete;
+static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
+	static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
+	                                                              g_rgAgentOptions,
+	                                                              g_rgBackupStartOptions,
+	                                                              g_rgBackupModifyOptions,
+	                                                              g_rgBackupStatusOptions,
+	                                                              g_rgBackupAbortOptions,
+	                                                              g_rgBackupCleanupOptions,
+	                                                              g_rgBackupDiscontinueOptions,
+	                                                              g_rgBackupWaitOptions,
+	                                                              g_rgBackupPauseOptions,
+	                                                              g_rgBackupExpireOptions,
+	                                                              g_rgBackupDeleteOptions,
+	                                                              g_rgBackupDescribeOptions,
+	                                                              g_rgBackupDumpOptions,
+	                                                              g_rgBackupTagsOptions,
+	                                                              g_rgBackupListOptions,
+	                                                              g_rgBackupQueryOptions,
+	                                                              g_rgRestoreOptions,
+	                                                              g_rgDBAgentOptions,
+	                                                              g_rgDBStartOptions,
+	                                                              g_rgDBStatusOptions,
+	                                                              g_rgDBSwitchOptions,
+	                                                              g_rgDBAbortOptions,
+	                                                              g_rgDBPauseOptions };
+	std::string_view option = argv[i];
 
-	static bool reorderArguments(int argc, const char* argv[], int& newArgc, char**& newArgV) {
-		static std::vector<const char*> argvStorage;
-		std::vector<const char *> parameters;
-		std::vector<const char *> options;
+	options.emplace_back(option.data());
+	size_t equalPos = option.find('=');
 
-		parameters.push_back(argv[0]); // program name
-
-		for (int i = 1; i < argc; ++i) {
-			const char* arg = argv[i];
-
-			if (isOptions(arg)) {
-				if (!processOption(argc, argv, i, options))
-					return false;
-			} else {
-				parameters.emplace_back(arg);
-			}
-		}
-
-		argvStorage.reserve(parameters.size() + options.size() + 1); // +1 for null terminator
-		argvStorage = parameters;
-		argvStorage.insert(argvStorage.end(), options.begin(), options.end());
-		
-		newArgc = static_cast<int>(argvStorage.size());
-
-		argvStorage.push_back(nullptr); // Null-terminate the argv array
-		newArgV = const_cast<char**>(argvStorage.data());
-
-		return true;
+	if (equalPos != std::string_view::npos) {
+		option = option.substr(0, equalPos);
 	}
 
-private:
-
-	static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { 
-		g_rgOptions,
-		g_rgAgentOptions,
-		g_rgBackupStartOptions,
-		g_rgBackupModifyOptions,
-		g_rgBackupStatusOptions,
-		g_rgBackupAbortOptions,
-		g_rgBackupCleanupOptions,
-		g_rgBackupDiscontinueOptions,
-		g_rgBackupWaitOptions,
-		g_rgBackupPauseOptions,
-		g_rgBackupExpireOptions,
-		g_rgBackupDeleteOptions,
-		g_rgBackupDescribeOptions,
-		g_rgBackupDumpOptions,
-		g_rgBackupTagsOptions,
-		g_rgBackupListOptions,
-		g_rgBackupQueryOptions,
-		g_rgRestoreOptions,
-		g_rgDBAgentOptions,
-		g_rgDBStartOptions,
-		g_rgDBStatusOptions,
-		g_rgDBSwitchOptions,
-		g_rgDBAbortOptions,
-		g_rgDBPauseOptions 
-	};
+	auto isPrefixOption = [](std::string_view optName) -> bool { return !optName.empty() && optName.back() == '-'; };
 
 	// Checks if the given option is the end marker of an options array in CSimpleOpt.
 	// The last option in an array is always the END_MARKER = SO_END_OF_OPTIONS.
-	static constexpr bool isSOEndOption(const CSimpleOpt::SOption& opt) {
+	auto isSOEndOption = [](const CSimpleOpt::SOption& opt) -> bool {
 		constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 		return opt.nId == END_MARKER.nId && opt.pszArg == END_MARKER.pszArg && opt.nArgType == END_MARKER.nArgType;
-	}
+	};
 
-	static constexpr bool isOptions(const char* arg) {
-		return arg && *arg == '-';
-	}
+	for (auto* opt : allOptionArrays) {
+		for (int j = 0; !isSOEndOption(opt[j]); ++j) {
+			const char* knownOpt = opt[j].pszArg;
 
-	static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
-		std::string_view option = argv[i];
-		options.emplace_back(option.data());
+			size_t knownOptLen = strlen(knownOpt);
 
-		size_t equalPos = option.find('=');
+			if (option == knownOpt || (isPrefixOption(knownOpt) && option.size() >= knownOptLen &&
+			                           option.compare(0, knownOptLen, knownOpt) == 0)) {
+				if (opt[j].nArgType == SO_REQ_SEP && equalPos == std::string_view::npos) {
+					++i;
 
-		if (equalPos != std::string_view::npos) {
-			option = option.substr(0, equalPos);
-		}
-
-		for (auto* opt : allOptionArrays) {
-			for (int j = 0; !isSOEndOption(opt[j]); ++j) {
-				const char* knownOpt = opt[j].pszArg;
-				size_t knownOptLen = strlen(knownOpt);
-
-				if (!knownOpt)
-					continue;
-
-				if (option == knownOpt || (isPrefixOption(knownOpt) && option.size() >= knownOptLen &&
-				                           option.compare(0, knownOptLen, knownOpt) == 0)) {
-					if (opt[j].nArgType == SO_REQ_SEP && equalPos == std::string_view::npos) {
-						++i;
-
-						if (i >= argc) {
-							fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
-							return false;
-						}
-
-						options.emplace_back(argv[i]);
-						return true;
+					if (i >= argc) {
+						fmt::print(stderr, "ERROR: Option {} requires a parameter\n", option);
+						return false;
 					}
+
+					options.emplace_back(argv[i]);
 					return true;
 				}
+				return true;
 			}
 		}
-		fmt::print(stderr, "ERROR: Unknown option '{}'\n", option);
-		return false;
+	}
+	fmt::print(stderr, "ERROR: Unknown option '{}'\n", option);
+	return false;
+}
+
+static bool reorderArguments(int argc, const char* argv[], int& newArgC, char**& newArgV) {
+	static std::vector<const char*> argvStorage;
+	std::vector<const char*> parameters;
+	std::vector<const char*> options;
+
+	parameters.push_back(argv[0]); // program name
+	auto isOptions = [](const char* arg) -> bool { return arg && *arg == '-'; };
+
+	for (int i = 1; i < argc; ++i) {
+		const char* arg = argv[i];
+
+		if (isOptions(arg)) {
+			if (!processOption(argc, argv, i, options))
+				return false;
+		} else {
+			parameters.emplace_back(arg);
+		}
 	}
 
-	static constexpr bool isPrefixOption(std::string_view optName) {
-		return !optName.empty() && optName.back() == '-';
-	}
-};
+	argvStorage.reserve(parameters.size() + options.size() + 1); // +1 for null terminator
+	argvStorage = parameters;
+	argvStorage.insert(argvStorage.end(), options.begin(), options.end());
 
+	newArgC = static_cast<int>(argvStorage.size());
+
+	argvStorage.push_back(nullptr); // Null-terminate the argv array
+	newArgV = const_cast<char**>(argvStorage.data());
+
+	return true;
+}
 
 #ifndef EXCLUDE_MAIN_FUNCTION
 
@@ -3451,12 +3429,11 @@ int main(int argc, char* argv[]) {
 		DBType dbType = DBType::UNDEFINED;
 
 		std::unique_ptr<CSimpleOpt> args;
-		ParsedArgs parsedArgs;
 
 		char** newArgV{};
 		int newArgC{};
 
-		if (!parsedArgs.reorderArguments(argc, const_cast<const char**>(argv), newArgC, newArgV)) {
+		if (!reorderArguments(argc, const_cast<const char**>(argv), newArgC, newArgV)) {
 			return FDB_EXIT_ERROR;
 		}
 
@@ -4804,8 +4781,6 @@ int main() {
 	{
 		printf("\n--- Test: %s ---\n", testName);
 
-		ParsedArgs parser;
-
 		std::vector<const char*> argv;
 		for (auto& arg : args) 
 		{
@@ -4815,7 +4790,7 @@ int main() {
 
 		int argcNew {};
 		char** argvNew {};
-		bool success = parser.reorderArguments(args.size(), argv.data(), argcNew, argvNew);
+		bool success = reorderArguments(args.size(), argv.data(), argcNew, argvNew);
 
 		printf("DEBUG: argcNew: %d\n", argcNew);
 		for (int i = 0; i < argcNew; ++i) {
