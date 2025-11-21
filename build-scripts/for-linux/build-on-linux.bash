@@ -61,7 +61,7 @@ echo "number of parallel jobs: [$PARALLEL_PRMS]"
 ninja $PARALLEL_PRMS -k 0
 
 echo "=== Disk space after build ==="
-df -h 
+df -h
 
 cpack -G RPM
 for fn in packages/*.rpm; do echo "$fn:"; rpm -qpRv $fn; echo; done
