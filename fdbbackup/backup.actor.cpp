@@ -3323,6 +3323,9 @@ static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
 	                                                              g_rgDBAbortOptions,
 	                                                              g_rgDBPauseOptions };
 
+// The last parameter in SOption arrays is always END_MARKER = SO_END_OF_OPTIONS.
+constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
+
 static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
 	std::string_view option = argv[i];
 
@@ -3332,9 +3335,6 @@ static bool processOption(int argc, const char* argv[], int& i, std::vector<cons
 	if (equalPos != std::string_view::npos) {
 		option = option.substr(0, equalPos);
 	}
-	// Checks if the given option is the end marker of an options array in CSimpleOpt.
-	// The last option in an array is always the END_MARKER = SO_END_OF_OPTIONS.
-	constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 
 	for (auto* opt : allOptionArrays) {
 		for (int j = 0; opt[j].pszArg != END_MARKER.pszArg; ++j) {
