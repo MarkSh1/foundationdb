@@ -3295,9 +3295,29 @@ static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
 	                                                              g_rgDBAbortOptions,
 	                                                              g_rgDBPauseOptions };
 
-// The last parameter in SOption arrays is always END_MARKER = SO_END_OF_OPTIONS.
+// The last element in SOption arrays is always END_MARKER = SO_END_OF_OPTIONS.
 constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 
+
+/**
+ * Validates and processes a command-line option.
+ *
+ * This function checks if the current argument (argv[i]) matches any known option.
+ * If the option requires a parameter, it consumes the next argument as the parameter.
+ * The processed option (and its parameter, if any) are added to the 'options' vector.
+ *
+ * Parameters:
+ *   argc    - Total number of command-line arguments.
+ *   argv    - Array of command-line argument strings.
+ *   i       - Current index in argv; incremented if a parameter is consumed.
+ *   options - Vector to which valid options (and their parameters, if any) are appended.
+ *
+ * Returns:
+ *   true if the option is recognized and valid (and its parameter, if required, is present);
+ *   false otherwise.
+ *
+ * This function is used to reorder and validate command-line arguments.
+ */
 static bool processOption(int argc, char* argv[], int& i, std::vector<char*>& options) {
 	std::string_view option = argv[i];
 
@@ -3334,6 +3354,13 @@ static bool processOption(int argc, char* argv[], int& i, std::vector<char*>& op
 	return false;
 }
 
+/**
+ * Reorders command-line arguments so that all non-option parameters (subcommands) are placed before options.
+ * Validates all options using processOption. Returns the reordered arguments via the output parameters
+ * newArgC (argument count) and newArgV (argument vector).
+ *
+ * Note: The returned newArgV pointer points to static storage (argvStorage)
+ */
 static bool reorderArguments(int argc, char* argv[], int& newArgC, char**& newArgV) {
 	static std::vector<char*> argvStorage;
 	std::vector<char*> parameters;
@@ -4719,22 +4746,35 @@ int main() {
 
 	printf("=== Running ParsedArgs Tests ===\n");
 
-	auto testOptionParsing = [](std::vector<std::string> args,
+	auto testOptionParsing = [](std::initializer_list<const char*> args,
 								const std::vector<std::string>& expectedOptions = {},
 								bool shouldSucceed = true,
 								const char* testName = "",
 								bool expectCSimpleOptions = false) -> bool {
 		printf("\n--- Test: %s ---\n", testName);
+		static std::vector<std::string> persistentArgs;
+		persistentArgs.clear();
+		persistentArgs.reserve(args.size());
+		for (const char* arg : args) {
+			persistentArgs.emplace_back(arg);
+		}
+		int argc = static_cast<int>(persistentArgs.size());
 
 		std::vector<char*> argv;
-		for (auto& arg : args) {
+		for (auto& arg : persistentArgs) {
 			argv.push_back(arg.data());
 		}
 		argv.push_back(nullptr);
 
 		int argcNew {};
 		char** argvNew {};
-		bool success = reorderArguments(args.size(), argv.data(), argcNew, argvNew);
+
+		printf("DEBUG: argc: %d\n", argc);
+		for (int i = 0; i < argv.size(); ++i) {
+			printf("DEBUG: argv[%d]: %s\n", i, argv[i]);
+		}
+
+		bool success = reorderArguments(argc, argv.data(), argcNew, argvNew);
 
 		printf("DEBUG: argcNew: %d\n", argcNew);
 		for (int i = 0; i < argcNew; ++i) {
@@ -4837,7 +4877,7 @@ int main() {
 								true, "4.1 Option with equals");
 	allPassed &= testOptionParsing({ "fdbbackup", "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
 								{ "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
-								true, "4.2 Multiple options with separator equal and space");
+								true, "4.2 Multiple options using both equals and space separators");
 
 	printf("\n5) Prefix Option Tests:\n");
 	allPassed &= testOptionParsing({ "fdbbackup", "start", "--knob-max_workers", "10" }, { "start", "--knob-max_workers", "10" },
@@ -4850,8 +4890,8 @@ int main() {
 	allPassed &= testOptionParsing({ "fdbbackup", "start", "--unknown-option" }, {}, false, "7.1 Unknown option");
 	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file" }, {}, false, "7.2 Missing parameter");
 	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file", "--help" }, {"start", "--cluster-file", "--help"}, true, "7.3 Option as parameter");
-	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {"start", "--cluster-file=/cluster", "-C="}, true, "7.4 Empty option with equals");
-	allPassed &= testOptionParsing({ "fdbbackup", "start", "-C=" }, {"start", "-C="}, true, "7.5 Does not take a parameter");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {"start", "--cluster-file=/cluster", "-C="}, true, "7.4 Option with empty parameter value using equals");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "-C=" }, {"start", "-C="}, true, "7.5 Empty parameter value with equals");
 
 	printf("\n=== %s ===\n", allPassed ? "All tests PASSED!" : "Some tests FAILED!");
 	return allPassed ? 0 : 1;
