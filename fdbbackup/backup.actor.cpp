@@ -3298,10 +3298,10 @@ static constexpr CSimpleOpt::SOption* const allOptionArrays[] = { g_rgOptions,
 // The last parameter in SOption arrays is always END_MARKER = SO_END_OF_OPTIONS.
 constexpr CSimpleOpt::SOption END_MARKER = SO_END_OF_OPTIONS;
 
-static bool processOption(int argc, const char* argv[], int& i, std::vector<const char*>& options) {
+static bool processOption(int argc, char* argv[], int& i, std::vector<char*>& options) {
 	std::string_view option = argv[i];
 
-	options.emplace_back(option.data());
+	options.emplace_back(argv[i]);
 	size_t equalPos = option.find('=');
 
 	if (equalPos != std::string_view::npos) {
@@ -3309,12 +3309,12 @@ static bool processOption(int argc, const char* argv[], int& i, std::vector<cons
 	}
 
 	for (auto* opt : allOptionArrays) {
-		for (int j = 0; opt[j].pszArg != END_MARKER.pszArg; ++j) {
+		for (int j = 0; opt[j].nId != END_MARKER.nId; ++j) {
 			const char* knownOpt = opt[j].pszArg;
 			size_t knownOptLen = strlen(knownOpt);
-			bool isPrefixOpt = knownOptLen > 0 && knownOpt[knownOptLen - 1] == '-';
+			bool isPrefixOpt = knownOptLen > 1 && knownOpt[knownOptLen - 1] == '-';
 
-			if (option == knownOpt || (isPrefixOpt && 
+			if (option == knownOpt || (isPrefixOpt &&
 									   option.size() >= knownOptLen &&
 									   option.compare(0, knownOptLen, knownOpt) == 0))
 			{
@@ -3334,16 +3334,16 @@ static bool processOption(int argc, const char* argv[], int& i, std::vector<cons
 	return false;
 }
 
-static bool reorderArguments(int argc, const char* argv[], int& newArgC, char**& newArgV) {
-	static std::vector<const char*> argvStorage;
-	std::vector<const char*> parameters;
-	std::vector<const char*> options;
+static bool reorderArguments(int argc, char* argv[], int& newArgC, char**& newArgV) {
+	static std::vector<char*> argvStorage;
+	std::vector<char*> parameters;
+	std::vector<char*> options;
 
 	parameters.push_back(argv[0]); // program name
 	auto isOptions = [](const char* arg) -> bool { return arg && *arg == '-'; };
 
 	for (int i = 1; i < argc; ++i) {
-		const char* arg = argv[i];
+		char* arg = argv[i];
 
 		if (isOptions(arg)) {
 			if (!processOption(argc, argv, i, options))
@@ -3360,7 +3360,7 @@ static bool reorderArguments(int argc, const char* argv[], int& newArgC, char**&
 	newArgC = static_cast<int>(argvStorage.size());
 
 	argvStorage.push_back(nullptr); // Null-terminate the argv array
-	newArgV = const_cast<char**>(argvStorage.data());
+	newArgV = argvStorage.data();
 
 	return true;
 }
@@ -3399,7 +3399,7 @@ int main(int argc, char* argv[]) {
 		char** newArgV{};
 		int newArgC{};
 
-		if (!reorderArguments(argc, const_cast<const char**>(argv), newArgC, newArgV)) {
+		if (!reorderArguments(argc, argv, newArgC, newArgV)) {
 			return FDB_EXIT_ERROR;
 		}
 
@@ -4719,17 +4719,15 @@ int main() {
 
 	printf("=== Running ParsedArgs Tests ===\n");
 
-	auto testWithCommands = [](std::vector<std::string> args,
+	auto testOptionParsing = [](std::vector<std::string> args,
 								const std::vector<std::string>& expectedOptions = {},
 								bool shouldSucceed = true,
 								const char* testName = "",
-								bool expectCSimpleOptions = false) -> bool
-	{
+								bool expectCSimpleOptions = false) -> bool {
 		printf("\n--- Test: %s ---\n", testName);
 
-		std::vector<const char*> argv;
-		for (auto& arg : args) 
-		{
+		std::vector<char*> argv;
+		for (auto& arg : args) {
 			argv.push_back(arg.data());
 		}
 		argv.push_back(nullptr);
@@ -4813,47 +4811,47 @@ int main() {
 
 	printf("\n1) Basic Command Tests:\n");
 	bool allPassed = true;
-	allPassed &= testWithCommands({ "fdbbackup", "status" }, { "status" }, true, "1.1 Single command");
-	allPassed &= testWithCommands({ "fdbbackup" }, {}, true, "1.2 No commands");
-	allPassed &= testWithCommands({ "fdbbackup", "unknown" }, { "unknown" }, true, "1.3 Unknown command");
-	allPassed &= testWithCommands({ "fdbbackup", "unknown1", "unknown2" }, { "unknown1", "unknown2"}, true, "1.4 Several unknown commands");
+	allPassed &= testOptionParsing({ "fdbbackup", "status" }, { "status" }, true, "1.1 Single command");
+	allPassed &= testOptionParsing({ "fdbbackup" }, {}, true, "1.2 No commands");
+	allPassed &= testOptionParsing({ "fdbbackup", "unknown" }, { "unknown" }, true, "1.3 Unknown command");
+	allPassed &= testOptionParsing({ "fdbbackup", "unknown1", "unknown2" }, { "unknown1", "unknown2"}, true, "1.4 Several unknown commands");
 
 	printf("\n2) Command Positioning Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "/cluster" }, { "start", "--cluster-file", "/cluster" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file", "/cluster" }, { "start", "--cluster-file", "/cluster" },
 								true, "2.1 Command before options");
-	allPassed &= testWithCommands({ "fdbbackup", "--cluster-file", "/cluster", "start" }, { "start", "--cluster-file", "/cluster" },
+	allPassed &= testOptionParsing({ "fdbbackup", "--cluster-file", "/cluster", "start" }, { "start", "--cluster-file", "/cluster" },
 								true, "2.2 Command after options");
-	allPassed &= testWithCommands({ "fdbbackup", "--cluster-file", "/cluster", "list", "--json" }, { "list", "--cluster-file", "/cluster", "--json" },
+	allPassed &= testOptionParsing({ "fdbbackup", "--cluster-file", "/cluster", "list", "--json" }, { "list", "--cluster-file", "/cluster", "--json" },
 								true, "2.3 Options before and after command");
 
 	printf("\n3) Option Parameter Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "-C", "/cluster" }, { "start", "-C", "/cluster" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "-C", "/cluster" }, { "start", "-C", "/cluster" },
 								true, "3.1 Short option with parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--snapshot-interval", "30" }, { "start", "--snapshot-interval", "30" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--snapshot-interval", "30" }, { "start", "--snapshot-interval", "30" },
 								true, "3.2 Option with parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--logdir", "/logs", "--trace-format", "json" }, { "start", "--logdir", "/logs", "--trace-format", "json" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--logdir", "/logs", "--trace-format", "json" }, { "start", "--logdir", "/logs", "--trace-format", "json" },
 								true, "3.3 Multiple options with parameters");
 
 	printf("\n4) Equal Sign Parameter Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file=/cluster" }, { "start", "--cluster-file=/cluster" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file=/cluster" }, { "start", "--cluster-file=/cluster" },
 								true, "4.1 Option with equals");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
 								{ "start", "--snapshot-interval", "30", "--cluster-file=/cluster" },
 								true, "4.2 Multiple options with separator equal and space");
 
 	printf("\n5) Prefix Option Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--knob-max_workers", "10" }, { "start", "--knob-max_workers", "10" },
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--knob-max_workers", "10" }, { "start", "--knob-max_workers", "10" },
 								true, "5.1 Knob option with parameter");
 
 	printf("\n6) Global flag options and CSimpleOpt Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "--version", "-h" }, {"--version", "-h"}, true, "6.1 Version flag", true);
+	allPassed &= testOptionParsing({ "fdbbackup", "--version", "-h" }, {"--version", "-h"}, true, "6.1 Version flag", true);
 
 	printf("\n7) Error Tests:\n");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--unknown-option" }, {}, false, "7.1 Unknown option");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file" }, {}, false, "7.2 Missing parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file", "--help" }, {"start", "--cluster-file", "--help"}, true, "7.3 Option as parameter");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {"start", "--cluster-file=/cluster", "-C="}, true, "7.4 Empty option with equals");
-	allPassed &= testWithCommands({ "fdbbackup", "start", "-C=" }, {"start", "-C="}, true, "7.5 Does not take a parameter");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--unknown-option" }, {}, false, "7.1 Unknown option");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file" }, {}, false, "7.2 Missing parameter");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file", "--help" }, {"start", "--cluster-file", "--help"}, true, "7.3 Option as parameter");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "--cluster-file=/cluster", "-C=" }, {"start", "--cluster-file=/cluster", "-C="}, true, "7.4 Empty option with equals");
+	allPassed &= testOptionParsing({ "fdbbackup", "start", "-C=" }, {"start", "-C="}, true, "7.5 Does not take a parameter");
 
 	printf("\n=== %s ===\n", allPassed ? "All tests PASSED!" : "Some tests FAILED!");
 	return allPassed ? 0 : 1;
