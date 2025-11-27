@@ -42,7 +42,6 @@
 #include "flow/FastRef.h"
 #include "flow/Knobs.h"
 #include "flow/flow.h"
-
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 typedef int NID;
@@ -75,6 +74,17 @@ struct Criteria {
 	}
 
 	bool operator!=(const Criteria& c) const noexcept { return !(*this == c); }
+
+	bool operator<(const Criteria& c) const {
+		if (criteria != c.criteria) {
+			return criteria < c.criteria;
+		} else if (match_type != c.match_type) {
+			return match_type < c.match_type;
+		} else if (location != c.location) {
+			return location < c.location;
+		}
+		return false;
+	}
 };
 
 enum class TLSEndpointType { UNSET = 0, CLIENT, SERVER };
@@ -202,6 +212,8 @@ public:
 
 	bool getDisablePlainTextConnection() const;
 
+	bool isInsecure() const { return tlsCertPath.empty() && tlsCertBytes.empty(); }
+
 #ifndef PRIVATE_EXCEPT_FOR_TLSCONFIG_CPP
 private:
 #endif
@@ -247,7 +259,7 @@ public:
 	std::string toString() const;
 
 	struct Rule {
-		using CriteriaMap = std::map<NID, Criteria>;
+		using CriteriaMap = std::set<std::pair<NID, Criteria>>;
 
 		explicit Rule(std::string input);
 

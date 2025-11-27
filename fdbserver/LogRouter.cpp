@@ -18,7 +18,6 @@
  * limitations under the License.
  */
 
-#include "fdbclient/Atomic.h"
 #include "fdbrpc/Stats.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/LogSystem.h"
@@ -93,6 +92,8 @@ struct LogRouterData {
 	int64_t generation = -1;
 	Reference<Histogram> peekLatencyDist;
 	Optional<Version> recoverAt = Optional<Version>();
+	Optional<std::map<uint8_t, std::vector<uint16_t>>> knownLockedTLogIds =
+	    Optional<std::map<uint8_t, std::vector<uint16_t>>>();
 
 	struct PeekTrackerData {
 		std::map<int, Promise<std::pair<Version, bool>>> sequence_version;
@@ -140,6 +141,7 @@ struct LogRouterData {
 		logSet.updateLocalitySet(req.tLogLocalities);
 
 		recoverAt = req.recoverAt;
+		knownLockedTLogIds = req.knownLockedTLogIds;
 
 		for (int i = 0; i < req.tLogLocalities.size(); i++) {
 			Tag tag(tagLocalityRemoteLog, i);
@@ -390,8 +392,8 @@ Future<Reference<ILogSystem::IPeekCursor>> LogRouterData::getPeekCursorData(Refe
 		    .When(logSystemChanged,
 		          [&](const Void&) {
 			          if (logSystem->get()) {
-				          result =
-				              logSystem->get()->peekLogRouter(dbgid, beginVersion, routerTag, useSatellite, recoverAt);
+				          result = logSystem->get()->peekLogRouter(
+				              dbgid, beginVersion, routerTag, useSatellite, recoverAt, knownLockedTLogIds);
 				          primaryPeekLocation = result->getPrimaryPeekLocation();
 				          TraceEvent("LogRouterPeekLocation", dbgid)
 				              .detail("LogID", result->getPrimaryPeekLocation())
@@ -407,7 +409,8 @@ Future<Reference<ILogSystem::IPeekCursor>> LogRouterData::getPeekCursorData(Refe
 			          CODE_PROBE(true, "Detect log router slow peeks");
 			          TraceEvent(SevWarnAlways, "LogRouterSlowPeek", dbgid).detail("NextTrySatellite", !useSatellite);
 			          useSatellite = !useSatellite;
-			          result = logSystem->get()->peekLogRouter(dbgid, beginVersion, routerTag, useSatellite, recoverAt);
+			          result = logSystem->get()->peekLogRouter(
+			              dbgid, beginVersion, routerTag, useSatellite, recoverAt, knownLockedTLogIds);
 			          primaryPeekLocation = result->getPrimaryPeekLocation();
 			          TraceEvent("LogRouterPeekLocation", dbgid)
 			              .detail("LogID", result->getPrimaryPeekLocation())

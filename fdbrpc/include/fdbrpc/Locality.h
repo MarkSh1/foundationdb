@@ -43,7 +43,7 @@ struct ProcessClass {
 		DataDistributorClass,
 		CoordinatorClass,
 		RatekeeperClass,
-		StorageCacheClass,
+		RemovedClassPlaceholder1, // removing the name of removed functionality, but don't renumber subsequent entries.
 		BackupClass,
 		GrvProxyClass,
 		BlobManagerClass,
@@ -72,7 +72,7 @@ struct ProcessClass {
 	static_assert(ProcessClass::DataDistributorClass == 12);
 	static_assert(ProcessClass::CoordinatorClass == 13);
 	static_assert(ProcessClass::RatekeeperClass == 14);
-	static_assert(ProcessClass::StorageCacheClass == 15);
+	// intentional gap at 15
 	static_assert(ProcessClass::BackupClass == 16);
 	static_assert(ProcessClass::GrvProxyClass == 17);
 	static_assert(ProcessClass::BlobManagerClass == 18);
@@ -107,7 +107,7 @@ struct ProcessClass {
 		BlobManager,
 		BlobWorker,
 		BlobMigrator,
-		StorageCache,
+		RemovedRolePlaceholder1,
 		Backup,
 		EncryptKeyProxy,
 		Worker, // used for actor lineage tracking
@@ -152,7 +152,6 @@ public:
 		else if (s=="consistency_scan") _class = ConsistencyScanClass;
 		else if (s=="blob_manager") _class = BlobManagerClass;
 		else if (s=="blob_worker") _class = BlobWorkerClass;
-		else if (s=="storage_cache") _class = StorageCacheClass;
 		else if (s=="backup") _class = BackupClass;
 		else if (s=="encrypt_key_proxy") _class = EncryptKeyProxyClass;
 		else if (s=="sim_http_server") _class = SimHTTPServerClass;
@@ -184,7 +183,6 @@ public:
 		else if (classStr=="consistency_scan") _class = ConsistencyScanClass;
 		else if (classStr=="blob_manager") _class = BlobManagerClass;
 		else if (classStr=="blob_worker") _class = BlobWorkerClass;
-		else if (classStr=="storage_cache") _class = StorageCacheClass;
 		else if (classStr=="backup") _class = BackupClass;
 		else if (classStr=="encrypt_key_proxy") _class = EncryptKeyProxyClass;
 		else if (classStr=="sim_http_server") _class = SimHTTPServerClass;
@@ -226,7 +224,6 @@ public:
 			case ConsistencyScanClass: return "consistency_scan";
 			case BlobManagerClass: return "blob_manager";
 			case BlobWorkerClass: return "blob_worker";
-			case StorageCacheClass: return "storage_cache";
 			case BackupClass: return "backup";
 			case EncryptKeyProxyClass: return "encrypt_key_proxy";
 			case SimHTTPServerClass: return "sim_http_server";
@@ -261,11 +258,11 @@ public:
 struct LocalityData {
 	std::map<Standalone<StringRef>, Optional<Standalone<StringRef>>> _data;
 
-	static const StringRef keyProcessId;
-	static const StringRef keyZoneId;
-	static const StringRef keyDcId;
-	static const StringRef keyMachineId;
-	static const StringRef keyDataHallId;
+	alignas(8) static const StringRef keyProcessId;
+	alignas(8) static const StringRef keyZoneId;
+	alignas(8) static const StringRef keyDcId;
+	alignas(8) static const StringRef keyMachineId;
+	alignas(8) static const StringRef keyDataHallId;
 
 public:
 	LocalityData() {}
@@ -382,7 +379,7 @@ public:
 	}
 
 	static const UID UNSET_ID;
-	static const StringRef ExcludeLocalityPrefix;
+	alignas(8) static const StringRef ExcludeLocalityPrefix;
 };
 
 static std::string describe(std::vector<LocalityData> const& items, StringRef const key, int max_items = -1) {
@@ -410,16 +407,28 @@ struct ProcessData {
 	LocalityData locality;
 	ProcessClass processClass;
 	NetworkAddress address;
+	Optional<NetworkAddress> grpcAddress;
 
 	ProcessData() {}
-	ProcessData(LocalityData locality, ProcessClass processClass, NetworkAddress address)
-	  : locality(locality), processClass(processClass), address(address) {}
+	ProcessData(LocalityData locality,
+	            ProcessClass processClass,
+	            NetworkAddress address,
+	            Optional<NetworkAddress> grpcAddress)
+	  : locality(locality), processClass(processClass), address(address), grpcAddress(grpcAddress) {}
 
 	// To change this serialization, ProtocolVersion::WorkerListValue must be updated, and downgrades need to be
 	// considered
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, locality, processClass, address);
+
+		if constexpr (!is_fb_function<Ar>) {
+			if (ar.protocolVersion().hasGrpcEndpoint()) {
+				serializer(ar, grpcAddress);
+			}
+		} else {
+			serializer(ar, grpcAddress);
+		}
 	}
 
 	struct sort_by_address {

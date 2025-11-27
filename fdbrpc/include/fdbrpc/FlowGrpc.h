@@ -114,7 +114,10 @@ public:
 	~GrpcServer();
 
 	// Returns the singleton instance.
-	static std::shared_ptr<GrpcServer> instance() { return FlowGrpc::instance()->server(); }
+	static std::shared_ptr<GrpcServer> instance() {
+		auto p = FlowGrpc::instance();
+		return p ? p->server() : nullptr;
+	}
 
 	// Returns the gRPC server address. Currently, we only listen on single port globally.
 	NetworkAddress getAddress() const { return address_; }
@@ -126,6 +129,7 @@ public:
 	// Stops the server and returns future that is fulfilled when stop is successfully finished. Unlike shutdown()
 	// server can be resumed later.
 	Future<Void> stopServer();
+	void stopServerSync();
 
 	// Shutdowns the server and returns future that is fulfilled when stop is successfully finished. Once shutdown,
 	// server can't be restarted.
@@ -149,6 +153,7 @@ public:
 	// Removes services associated with given `owner_id` from the server. Returns future that is fulfilled onced the
 	// services are no longer alive (however, server may not have restarted yet).
 	Future<Void> deregisterRoleServices(const UID& owner_id);
+	void deregisterRoleServicesSync(const UID& owner_id);
 
 	// Returns `true` if TLS is enabled.
 	bool isTLSEnabled() const;
@@ -170,7 +175,7 @@ private:
 	Future<Void> runInternal();
 
 	// Calls gRPC stop server methods synchronously. Will block the caller thread.
-	void stopServerSync();
+	void stopServerSyncInternal();
 
 private:
 	NetworkAddress address_;

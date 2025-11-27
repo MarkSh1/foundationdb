@@ -19,20 +19,26 @@
  */
 
 #include "fdbclient/Knobs.h"
-#include "fdbclient/FDBTypes.h"
-#include "fdbclient/SystemData.h"
-#include "fdbclient/Tenant.h"
 #include "flow/IRandom.h"
+#include "flow/Knobs.h"
 #include "flow/UnitTest.h"
 #include "flow/flow.h"
 
-#define init(...) KNOB_FN(__VA_ARGS__, INIT_ATOMIC_KNOB, INIT_KNOB)(__VA_ARGS__)
-
-ClientKnobs::ClientKnobs(Randomize randomize) {
-	initialize(randomize);
+int getSimulatedTxnTimeoutSeconds() {
+	if (deterministicRandom()->truePercent(90)) {
+		return 5;
+	} else {
+		return deterministicRandom()->randomInt(1, 11); // [1, 10]
+	}
 }
 
-void ClientKnobs::initialize(Randomize randomize) {
+#define init(...) KNOB_FN(__VA_ARGS__, INIT_ATOMIC_KNOB, INIT_KNOB)(__VA_ARGS__)
+
+ClientKnobs::ClientKnobs(Randomize randomize, IsSimulated isSimulated) {
+	initialize(randomize, isSimulated);
+}
+
+void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	// clang-format off
 
 	init( TOO_MANY,                            1000000 );
@@ -55,6 +61,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MAX_COMMIT_PROXY_CONNECTIONS,              5 ); if( randomize && BUGGIFY ) MAX_COMMIT_PROXY_CONNECTIONS = 1;
 	init( MAX_GRV_PROXY_CONNECTIONS,                 3 ); if( randomize && BUGGIFY ) MAX_GRV_PROXY_CONNECTIONS = 1;
 	init( STATUS_IDLE_TIMEOUT,                   120.0 );
+	init( GRPC_CTL_SERVICE_DEFAULT_TIMEOUT,        5.0 );
 	init( SEND_ENTIRE_VERSION_VECTOR,            false );
 
 	// wrong_shard_server sometimes comes from the only nonfailed server, so we need to avoid a fast spin
@@ -124,6 +131,10 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( FAST_WATCH_TIMEOUT,                     20.0 ); if( randomize && BUGGIFY ) FAST_WATCH_TIMEOUT = 1.0;
 	init( WATCH_TIMEOUT,                          30.0 ); if( randomize && BUGGIFY ) WATCH_TIMEOUT = 20.0;
 
+	// Versions -- knobs that control 5s timeout
+	init( VERSIONS_PER_SECOND,                     1e6 ); // Must be the same as SERVER_KNOBS->VERSIONS_PER_SECOND
+	init( MAX_WRITE_TRANSACTION_LIFE_VERSIONS,     5 * VERSIONS_PER_SECOND);  if (isSimulated) MAX_WRITE_TRANSACTION_LIFE_VERSIONS = getSimulatedTxnTimeoutSeconds() * VERSIONS_PER_SECOND;
+
 	// Core
 	init( CORE_VERSIONSPERSECOND,		           1e6 );
 	init( LOG_RANGE_BLOCK_SIZE, CORE_VERSIONSPERSECOND );
@@ -176,8 +187,6 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( COPY_LOG_TASK_DURATION_NANOS,	      1e10 ); // 10 seconds
 	init( BACKUP_TASKS_PER_AGENT,                   10 );
 	init( BACKUP_POLL_PROGRESS_SECONDS,             10 );
-	init( VERSIONS_PER_SECOND,                     1e6 ); // Must be the same as SERVER_KNOBS->VERSIONS_PER_SECOND
-	init( MAX_WRITE_TRANSACTION_LIFE_VERSIONS, 5 * VERSIONS_PER_SECOND);  // Must be the same as SERVER_KNOBS->MAX_WRITE_TRANSACTION_LIFE_VERSIONS
 	init( SIM_BACKUP_TASKS_PER_AGENT,               10 );
 	init( BACKUP_RANGEFILE_BLOCK_SIZE,      1024 * 1024);
 	init( BACKUP_LOGFILE_BLOCK_SIZE,        1024 * 1024);
@@ -197,10 +206,10 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( MIN_CLEANUP_SECONDS,                  3600.0 );
 	init( FASTRESTORE_ATOMICOP_WEIGHT,               1 ); if( randomize && BUGGIFY ) { FASTRESTORE_ATOMICOP_WEIGHT = deterministicRandom()->random01() * 200 + 1; }
 	init( RESTORE_RANGES_READ_BATCH,             10000 );
-	init( BLOB_GRANULE_RESTORE_CHECK_INTERVAL,      10 );
+
 	init( BACKUP_CONTAINER_LOCAL_ALLOW_RELATIVE_PATH, false );
 	init( ENABLE_REPLICA_CONSISTENCY_CHECK_ON_BACKUP_READS, false ); if( randomize && BUGGIFY ) { ENABLE_REPLICA_CONSISTENCY_CHECK_ON_BACKUP_READS = true; }
-	init( CONSISTENCY_CHECK_REQUIRED_REPLICAS,      -2 ); // Do consistency check based on all available storage replicas
+	init( BACKUP_CONSISTENCY_CHECK_REQUIRED_REPLICAS, -2 ); // Do consistency check based on all available storage replicas
 	init( BULKLOAD_JOB_HISTORY_COUNT_MAX,           10 ); if (randomize && BUGGIFY) BULKLOAD_JOB_HISTORY_COUNT_MAX = deterministicRandom()->randomInt(1, 10);
 	init( BULKLOAD_VERBOSE_LEVEL,                   10 );
 	init( S3CLIENT_VERBOSE_LEVEL,                   10 );
@@ -233,7 +242,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 	init( BLOBSTORE_CONCURRENT_WRITES_PER_FILE,      5 );
 	init( BLOBSTORE_CONCURRENT_READS_PER_FILE,       3 );
-	init( BLOBSTORE_ENABLE_READ_CACHE,            true );
+	init( BLOBSTORE_ENABLE_READ_CACHE,            true ); if ( randomize && BUGGIFY ) BLOBSTORE_ENABLE_READ_CACHE = deterministicRandom()->coinflip();
 	init( BLOBSTORE_READ_BLOCK_SIZE,       1024 * 1024 );
 	init( BLOBSTORE_READ_AHEAD_BLOCKS,               0 );
 	init( BLOBSTORE_READ_CACHE_BLOCKS_PER_FILE,      2 );
@@ -251,14 +260,17 @@ void ClientKnobs::initialize(Randomize randomize) {
 	init( BLOBSTORE_MAX_SEND_BYTES_PER_SECOND,      1e9 );
 	init( BLOBSTORE_MAX_RECV_BYTES_PER_SECOND,      1e9 );
 
-	init( BLOBSTORE_MAX_DELAY_RETRYABLE_ERROR,      60  );
+	init( BLOBSTORE_MAX_DELAY_RETRYABLE_ERROR,      20  ); // Align with AWS SDK best practices (was 60s)
 	init( BLOBSTORE_MAX_DELAY_CONNECTION_FAILED,    10  );
-	init (BLOBSTORE_ENABLE_OBJECT_INTEGRITY_CHECK,false );
+	init (BLOBSTORE_ENABLE_OBJECT_INTEGRITY_CHECK,true );
 
 	init( BLOBSTORE_LIST_REQUESTS_PER_SECOND,       200 );
 	init( BLOBSTORE_WRITE_REQUESTS_PER_SECOND,       50 );
 	init( BLOBSTORE_READ_REQUESTS_PER_SECOND,       100 );
 	init( BLOBSTORE_DELETE_REQUESTS_PER_SECOND,     200 );
+
+	// Request 1000 keys at a time, the maximum allowed
+	init( BLOBSTORE_LIST_MAX_KEYS_PER_PAGE,        1000 );
 
 	// Dynamic Knobs
 	init( COMMIT_QUORUM_TIMEOUT,                    3.0 );
@@ -292,6 +304,7 @@ void ClientKnobs::initialize(Randomize randomize) {
 	//fdbcli
 	init( CLI_CONNECT_PARALLELISM,                  400 );
 	init( CLI_CONNECT_TIMEOUT,                     10.0 );
+	init( CLI_PRINT_INVALID_CONFIGURATION,		  false );
 
 	// trace
 	init( TRACE_LOG_FILE_IDENTIFIER_MAX_LENGTH,      50 );
@@ -313,13 +326,6 @@ void ClientKnobs::initialize(Randomize randomize) {
 	// busyness reporting
 	init( BUSYNESS_SPIKE_START_THRESHOLD,         0.100 );
 	init( BUSYNESS_SPIKE_SATURATED_THRESHOLD,     0.500 );
-
-	// Blob granules
-	init( BG_MAX_GRANULE_PARALLELISM,                10 );
-	init( BG_TOO_MANY_GRANULES,                   20000 );
-	init( BLOB_METADATA_REFRESH_INTERVAL,          3600 ); if ( randomize && BUGGIFY ) { BLOB_METADATA_REFRESH_INTERVAL = deterministicRandom()->randomInt(5, 120); }
-	init( DETERMINISTIC_BLOB_METADATA,            false ); if( randomize && BUGGIFY_WITH_PROB(0.01) ) DETERMINISTIC_BLOB_METADATA = true;
-	init( ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE,  false ); if ( randomize && BUGGIFY ) { ENABLE_BLOB_GRANULE_FILE_LOGICAL_SIZE = true; }
 
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_TIMES,        3 );
 	init( CHANGE_QUORUM_BAD_STATE_RETRY_DELAY,      2.0 );
@@ -355,13 +361,13 @@ void ClientKnobs::initialize(Randomize randomize) {
 
 TEST_CASE("/fdbclient/knobs/initialize") {
 	// This test depends on TASKBUCKET_TIMEOUT_VERSIONS being defined as a constant multiple of CORE_VERSIONSPERSECOND
-	ClientKnobs clientKnobs(Randomize::False);
+	ClientKnobs clientKnobs(Randomize::False, IsSimulated::False);
 	int64_t initialCoreVersionsPerSecond = clientKnobs.CORE_VERSIONSPERSECOND;
 	int initialTaskBucketTimeoutVersions = clientKnobs.TASKBUCKET_TIMEOUT_VERSIONS;
 	clientKnobs.setKnob("core_versionspersecond", initialCoreVersionsPerSecond * 2);
 	ASSERT_EQ(clientKnobs.CORE_VERSIONSPERSECOND, initialCoreVersionsPerSecond * 2);
 	ASSERT_EQ(clientKnobs.TASKBUCKET_TIMEOUT_VERSIONS, initialTaskBucketTimeoutVersions);
-	clientKnobs.initialize(Randomize::False);
+	clientKnobs.initialize(Randomize::False, IsSimulated::False);
 	ASSERT_EQ(clientKnobs.CORE_VERSIONSPERSECOND, initialCoreVersionsPerSecond * 2);
 	ASSERT_EQ(clientKnobs.TASKBUCKET_TIMEOUT_VERSIONS, initialTaskBucketTimeoutVersions * 2);
 	return Void();

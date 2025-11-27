@@ -57,6 +57,7 @@ bindings/java/.classstamp*
 bindings/java/classes*/
 bindings/java/javadoc*/
 packaging/docker/website
+loopback-cluster/
 
 # Testing and logging
 packaging/msi/*.log
@@ -94,6 +95,7 @@ flow/coveragetool/obj
 /.ccls-cache
 /.clangd
 /.cache
+TAGS
 
 # Openway fork build
 /bld/
@@ -113,3 +115,7 @@ temp/
 /.ccls-cache
 .clangd/
 .stignore
+
+# AI assistants
+*.aider*
+*.fdq

@@ -229,12 +229,16 @@ struct ILogSystem {
 		int fastReplies;
 		int unknownReplies;
 
+		bool returnEmptyIfStopped; // the source log server can return an empty version range if this flag is set; valid
+		                           // only when version vector/unicast is enabled
+
 		ServerPeekCursor(Reference<AsyncVar<OptionalInterface<TLogInterface>>> const& interf,
 		                 Tag tag,
 		                 Version begin,
 		                 Version end,
 		                 bool returnIfBlocked,
-		                 bool parallelGetMore);
+		                 bool parallelGetMore,
+		                 bool returnEmtpyIfStopped = false);
 		ServerPeekCursor(TLogPeekReply const& results,
 		                 LogMessageVersion const& messageVersion,
 		                 LogMessageVersion const& end,
@@ -294,7 +298,8 @@ struct ILogSystem {
 		                 bool parallelGetMore,
 		                 std::vector<LocalityData> const& tLogLocalities,
 		                 Reference<IReplicationPolicy> const tLogPolicy,
-		                 int tLogReplicationFactor);
+		                 int tLogReplicationFactor,
+		                 const Optional<std::vector<uint16_t>>& knownLockedTLogIds = Optional<std::vector<uint16_t>>());
 		MergedPeekCursor(std::vector<Reference<IPeekCursor>> const& serverCursors,
 		                 LogMessageVersion const& messageVersion,
 		                 int bestServer,
@@ -343,6 +348,7 @@ struct ILogSystem {
 		bool useBestSet;
 		UID randomID;
 		Future<Void> more;
+		Optional<Version> end;
 
 		SetPeekCursor(std::vector<Reference<LogSet>> const& logSets,
 		              int bestSet,
@@ -350,7 +356,8 @@ struct ILogSystem {
 		              Tag tag,
 		              Version begin,
 		              Version end,
-		              bool parallelGetMore);
+		              bool parallelGetMore,
+		              const Optional<std::vector<uint16_t>>& knownLockedTLogIds = Optional<std::vector<uint16_t>>());
 		SetPeekCursor(std::vector<Reference<LogSet>> const& logSets,
 		              std::vector<std::vector<Reference<IPeekCursor>>> const& serverCursors,
 		              LogMessageVersion const& messageVersion,
@@ -501,7 +508,8 @@ struct ILogSystem {
 
 	virtual bool remoteStorageRecovered() const = 0;
 
-	virtual void purgeOldRecoveredGenerations() = 0;
+	virtual void purgeOldRecoveredGenerationsCoreState(DBCoreState&) = 0;
+	virtual void purgeOldRecoveredGenerationsInMemory(const DBCoreState&) = 0;
 
 	virtual Future<Void> onCoreStateChanged() const = 0;
 	// Returns if and when the output of toCoreState() would change (for example, when older logs can be discarded from
@@ -557,11 +565,14 @@ struct ILogSystem {
 	// Same contract as peek(), but blocks until the preferred log server(s) for the given tag are available (and is
 	// correspondingly less expensive)
 
-	virtual Reference<IPeekCursor> peekLogRouter(UID dbgid,
-	                                             Version begin,
-	                                             Tag tag,
-	                                             bool useSatellite,
-	                                             Optional<Version> end = Optional<Version>()) = 0;
+	virtual Reference<IPeekCursor> peekLogRouter(
+	    UID dbgid,
+	    Version begin,
+	    Tag tag,
+	    bool useSatellite,
+	    Optional<Version> end = Optional<Version>(),
+	    const Optional<std::map<uint8_t, std::vector<uint16_t>>>& knownStoppedTLogIds =
+	        Optional<std::map<uint8_t, std::vector<uint16_t>>>()) = 0;
 	// Same contract as peek(), but can only peek from the logs elected in the same generation.
 	// If the preferred log server is down, a different log from the same generation will merge results locally before
 	// sending them to the log router.

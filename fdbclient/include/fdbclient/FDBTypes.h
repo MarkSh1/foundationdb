@@ -53,7 +53,7 @@ typedef uint64_t CoordinatorsHash;
 static const KeyRef invalidKey = "\xff\xff\xff\xff\xff\xff\xff\xff"_sr;
 
 enum {
-	tagLocalitySpecial = -1, // tag with this locality means it is invalidTag (id=0), txsTag (id=1), or cacheTag (id=2)
+	tagLocalitySpecial = -1, // tag with this locality means it is invalidTag (id=0) or txsTag (id=1)
 	tagLocalityLogRouter = -2,
 	tagLocalityRemoteLog = -3, // tag created by log router for remote (aka. not in Primary DC) tLogs
 	tagLocalityUpgraded = -4, // tlogs with old log format (no longer applicable)
@@ -156,7 +156,6 @@ struct hash<Tag> {
 
 static const Tag invalidTag{ tagLocalitySpecial, 0 };
 static const Tag txsTag{ tagLocalitySpecial, 1 }; // obsolete now
-static const Tag cacheTag{ tagLocalitySpecial, 2 };
 
 struct TagsAndMessage {
 	StringRef message;
@@ -298,6 +297,7 @@ std::string printable(const VectorRef<KeyRangeRef>& val);
 std::string printable(const VectorRef<StringRef>& val);
 std::string printable(const VectorRef<KeyValueRef>& val);
 std::string printable(const KeyValueRef& val);
+std::string unprintable(std::string const& val);
 
 template <class T>
 std::string printable(const Optional<T>& val) {
@@ -1631,33 +1631,6 @@ std::vector<std::pair<Optional<Value>, Optional<Value>>> ParsePerpetualStorageWi
 // ParsePerpetualStorageWiggleLocality).
 bool localityMatchInList(const std::vector<std::pair<Optional<Value>, Optional<Value>>>& localityKeyValues,
                          const LocalityData& locality);
-
-// matches what's in fdb_c.h
-struct ReadBlobGranuleContext {
-	// User context to pass along to functions
-	void* userContext;
-
-	// Returns a unique id for the load. Asynchronous to support queueing multiple in parallel.
-	int64_t (*start_load_f)(const char* filename,
-	                        int filenameLength,
-	                        int64_t offset,
-	                        int64_t length,
-	                        int64_t fullFileLength,
-	                        void* context);
-
-	// Returns data for the load. Pass the loadId returned by start_load_f
-	uint8_t* (*get_load_f)(int64_t loadId, void* context);
-
-	// Frees data from load. Pass the loadId returned by start_load_f
-	void (*free_load_f)(int64_t loadId, void* context);
-
-	// Set this to true for testing if you don't want to read the granule files,
-	// just do the request to the blob workers
-	bool debugNoMaterialize;
-
-	// number of granules to load in parallel (default 1)
-	int granuleParallelism = 1;
-};
 
 // Store metadata associated with each storage server. Now it only contains data be used in perpetual storage
 // wiggle.

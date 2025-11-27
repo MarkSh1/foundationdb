@@ -74,9 +74,9 @@
 #ifdef WITH_ROCKSDB
 
 // Enforcing rocksdb version.
-static_assert((ROCKSDB_MAJOR == FDB_ROCKSDB_MAJOR && ROCKSDB_MINOR == FDB_ROCKSDB_MINOR &&
-               ROCKSDB_PATCH == FDB_ROCKSDB_PATCH),
-              "Unsupported rocksdb version.");
+static_assert(ROCKSDB_MAJOR == FDB_ROCKSDB_MAJOR, "Unsupported RocksDB major version");
+static_assert(ROCKSDB_MINOR == FDB_ROCKSDB_MINOR, "Unsupported RocksDB minor version");
+static_assert(ROCKSDB_PATCH == FDB_ROCKSDB_PATCH, "Unsupported RocksDB patch version");
 
 namespace {
 using rocksdb::BackgroundErrorReason;
@@ -515,7 +515,7 @@ void populateMetaData(CheckpointMetaData* checkpoint, const rocksdb::ExportImpor
 		rocksCF.sstFiles.push_back(liveFileMetaData);
 	}
 	checkpoint->setFormat(DataMoveRocksCF);
-	checkpoint->serializedCheckpoint = ObjectWriter::toValue(rocksCF, IncludeVersion());
+	checkpoint->setSerializedCheckpoint(ObjectWriter::toValue(rocksCF, IncludeVersion()));
 }
 
 rocksdb::Slice toSlice(StringRef s) {
@@ -1161,6 +1161,7 @@ ACTOR Future<Void> rocksDBMetricLogger(UID id,
 
 	state std::vector<std::pair<const char*, std::string>> strPropertyStats = {
 		{ "LevelStats", rocksdb::DB::Properties::kLevelStats },
+		{ "BlockCacheEntryStats", rocksdb::DB::Properties::kBlockCacheEntryStats },
 	};
 
 	state std::vector<std::pair<const char*, std::string>> levelStrPropertyStats = {
@@ -2136,8 +2137,10 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		    ROCKSDBSTORAGE_HISTOGRAM_GROUP, ROCKSDB_READPREFIX_GET_HISTOGRAM, Histogram::Unit::milliseconds);
 		state Reference<Histogram> rocksdbReadRangeBytesReturnedHistogram = Histogram::getHistogram(
 		    ROCKSDBSTORAGE_HISTOGRAM_GROUP, ROCKSDB_READ_RANGE_BYTES_RETURNED_HISTOGRAM, Histogram::Unit::bytes);
-		state Reference<Histogram> rocksdbReadRangeKVPairsReturnedHistogram = Histogram::getHistogram(
-		    ROCKSDBSTORAGE_HISTOGRAM_GROUP, ROCKSDB_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM, Histogram::Unit::bytes);
+		state Reference<Histogram> rocksdbReadRangeKVPairsReturnedHistogram =
+		    Histogram::getHistogram(ROCKSDBSTORAGE_HISTOGRAM_GROUP,
+		                            ROCKSDB_READ_RANGE_KV_PAIRS_RETURNED_HISTOGRAM,
+		                            Histogram::Unit::countLinear);
 		loop {
 			choose {
 				when(std::pair<std::string, double> measure = waitNext(metricFutureStream)) {
@@ -2344,11 +2347,13 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 			wait(delay(SERVER_KNOBS->ROCKSDB_CAN_COMMIT_DELAY_ON_OVERLOAD));
 			++self->counters.commitDelayed;
 			count--;
+			if (deterministicRandom()->random01() < 0.001)
+				TraceEvent(SevWarn, "RocksDBCommitsDelayed1000x", self->id)
+				    .detail("EstPendCompactBytes", estPendCompactBytes)
+				    .detail("NumImmutableMemtables", numImmutableMemtables);
 			self->db->GetAggregatedIntProperty(rocksdb::DB::Properties::kEstimatePendingCompactionBytes,
 			                                   &estPendCompactBytes);
 			self->db->GetAggregatedIntProperty(rocksdb::DB::Properties::kNumImmutableMemTable, &numImmutableMemtables);
-			if (deterministicRandom()->random01() < 0.001)
-				TraceEvent(SevWarn, "RocksDBCommitsDelayed1000x", self->id);
 		}
 
 		return Void();
@@ -2367,7 +2372,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 		self->maxDeletes = SERVER_KNOBS->ROCKSDB_SINGLEKEY_DELETES_MAX;
 		self->deletesPerCommitHistogram->sampleRecordCounter(self->deletesPerCommit);
 		self->deleteRangesPerCommitHistogram->sampleRecordCounter(self->deleteRangesPerCommit);
-		if (self->deletesPerCommit > 1000 || self->deleteRangesPerCommit > 1000)
+		if (self->deletesPerCommit > 8000 || self->deleteRangesPerCommit > 1000)
 			TraceEvent("RocksDBDeletesCount", self->id)
 			    .detail("DeletesPerCommit", self->deletesPerCommit)
 			    .detail("DeleteRangesPerCommit", self->deleteRangesPerCommit);
@@ -2547,7 +2552,7 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 	Future<Void> deleteCheckpoint(const CheckpointMetaData& checkpoint) override {
 		if (checkpoint.format == DataMoveRocksCF) {
 			RocksDBColumnFamilyCheckpoint rocksCF;
-			ObjectReader reader(checkpoint.serializedCheckpoint.begin(), IncludeVersion());
+			ObjectReader reader(checkpoint.getSerializedCheckpoint().begin(), IncludeVersion());
 			reader.deserialize(rocksCF);
 
 			std::unordered_set<std::string> dirs;
@@ -2693,7 +2698,7 @@ void RocksDBKeyValueStore::Writer::action(CheckpointAction& a) {
 		RocksDBCheckpoint rcp;
 		rcp.checkpointDir = checkpointDir;
 		rcp.sstFiles = platform::listFiles(checkpointDir, ".sst");
-		res.serializedCheckpoint = ObjectWriter::toValue(rcp, IncludeVersion());
+		res.setSerializedCheckpoint(ObjectWriter::toValue(rcp, IncludeVersion()));
 		TraceEvent("RocksDBCheckpointCreated", id)
 		    .detail("CheckpointVersion", a.request.version)
 		    .detail("RocksSequenceNumber", debugCheckpointSeq)

@@ -31,7 +31,7 @@ import (
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 )
 
-const API_VERSION int = 740
+const API_VERSION int = 800
 
 func ExampleOpenDefault() {
 	var err error
@@ -397,16 +397,16 @@ func TestGetClientStatus(t *testing.T) {
 	fdb.MustAPIVersion(API_VERSION)
 	db := fdb.MustOpenDefault()
 
-	st, e := db.GetClientStatus()
-	if e != nil {
-		t.Fatalf("GetClientStatus failed %v", e)
+	st, err := db.GetClientStatus()
+	if err != nil {
+		t.Fatalf("GetClientStatus failed %v", err)
 	}
 	if len(st) == 0 {
 		t.Fatal("returned status is empty")
 	}
 }
 
-func ExampleGetClientStatus() {
+func ExampleDatabase_GetClientStatus() {
 	fdb.MustAPIVersion(API_VERSION)
 	err := fdb.Options().SetDisableClientBypass()
 	if err != nil {
@@ -416,8 +416,8 @@ func ExampleGetClientStatus() {
 
 	db := fdb.MustOpenDefault()
 
-	st, e := db.GetClientStatus()
-	if e != nil {
+	st, err := db.GetClientStatus()
+	if err != nil {
 		fmt.Errorf("Unable to get client status: %v\n", err)
 		return
 	}

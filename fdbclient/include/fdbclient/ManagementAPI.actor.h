@@ -144,13 +144,6 @@ ACTOR Future<Void> unlockDatabase(Database cx, UID id);
 ACTOR Future<Void> checkDatabaseLock(Transaction* tr, UID id);
 ACTOR Future<Void> checkDatabaseLock(Reference<ReadYourWritesTransaction> tr, UID id);
 
-ACTOR Future<Void> updateChangeFeed(Transaction* tr, Key rangeID, ChangeFeedStatus status, KeyRange range = KeyRange());
-ACTOR Future<Void> updateChangeFeed(Reference<ReadYourWritesTransaction> tr,
-                                    Key rangeID,
-                                    ChangeFeedStatus status,
-                                    KeyRange range = KeyRange());
-ACTOR Future<Void> updateChangeFeed(Database cx, Key rangeID, ChangeFeedStatus status, KeyRange range = KeyRange());
-
 ACTOR Future<Void> advanceVersion(Database cx, Version v);
 
 ACTOR Future<int> setDDMode(Database cx, int mode);
@@ -175,16 +168,11 @@ ACTOR Future<int> setBulkLoadMode(Database cx, int mode);
 
 // Create a bulkload task submission transaction without commit
 // Used by ManagementAPI and bulkdumpRestore at DD
-ACTOR Future<Void> setBulkLoadSubmissionTransaction(Transaction* tr,
-                                                    BulkLoadTaskState bulkLoadTask,
-                                                    bool checkTaskExclusive = true);
+ACTOR Future<Void> setBulkLoadSubmissionTransaction(Transaction* tr, BulkLoadTaskState bulkLoadTask);
 
 // Create an bulkload task acknowledge transaction without commit
 // Used by ManagementAPI and bulkdumpRestore at DD
-ACTOR Future<Void> setBulkLoadFinalizeTransaction(Transaction* tr,
-                                                  KeyRange range,
-                                                  UID taskId,
-                                                  bool checkTaskExclusive = true);
+ACTOR Future<Void> setBulkLoadFinalizeTransaction(Transaction* tr, KeyRange range, UID taskId);
 
 // Get bulk load task for the input range and taskId
 ACTOR Future<BulkLoadTaskState> getBulkLoadTask(Transaction* tr,
@@ -293,6 +281,9 @@ bool schemaMatch(json_spirit::mValue const& schema,
 // execute payload in 'snapCmd' on all the coordinators, TLogs and
 // storage nodes
 ACTOR Future<Void> mgmtSnapCreate(Database cx, Standalone<StringRef> snapCmd, UID snapUID);
+
+ACTOR Future<Void> disableBackupWorker(Database cx);
+ACTOR Future<Void> enableBackupWorker(Database cx);
 
 #include "flow/unactorcompiler.h"
 #endif

@@ -47,17 +47,15 @@
 
 enum ClogMode { ClogDefault, ClogAll, ClogSend, ClogReceive };
 
-struct ValidationData {
-	// global validation that missing refreshed feeds were previously destroyed
-	std::unordered_set<std::string> allDestroyedChangeFeedIDs;
-};
-
 namespace simulator {
 struct ProcessInfo;
 struct MachineInfo;
 } // namespace simulator
 
 constexpr double DISABLE_CONNECTION_FAILURE_FOREVER = 1e6;
+
+// Minimum interval to disable connection failures. If less than this, connection failures are always disabled.
+constexpr double DISABLE_CONNECTION_FAILURE_MIN_INTERVAL = 1e-3;
 
 class ISimulator : public INetwork {
 
@@ -72,7 +70,7 @@ public:
 	enum class BackupAgentType { NoBackupAgents, WaitForType, BackupToFile, BackupToDB };
 	enum class ExtraDatabaseMode { Disabled, LocalOrSingle, Single, Local, Multiple };
 
-	static ExtraDatabaseMode stringToExtraDatabaseMode(std::string databaseMode) {
+	static ExtraDatabaseMode stringToExtraDatabaseMode(const std::string& databaseMode) {
 		if (databaseMode == "Disabled") {
 			return ExtraDatabaseMode::Disabled;
 		} else if (databaseMode == "LocalOrSingle") {
@@ -91,6 +89,10 @@ public:
 	};
 
 	ProcessInfo* getProcess(Endpoint const& endpoint) { return getProcessByAddress(endpoint.getPrimaryAddress()); }
+
+	// Returns currently executing process in simulation.
+	// Can return nullptr when currentProcess is cleared in destroyProcess(); returning nullptr prevents trace
+	// events during destruction from accessing a dangling pointer. Can also be null before any process created.
 	ProcessInfo* getCurrentProcess() { return currentProcess; }
 	ProcessInfo const* getCurrentProcess() const { return currentProcess; }
 
@@ -130,7 +132,6 @@ public:
 	                          bool forceKill = false,
 	                          KillType* ktFinal = nullptr) = 0;
 	virtual bool killAll(KillType kt, bool forceKill = false, KillType* ktFinal = nullptr) = 0;
-	// virtual KillType getMachineKillState( UID zoneID ) = 0;
 	virtual void processInjectBlobFault(ProcessInfo* machine, double failureRate) = 0;
 	virtual void processStopInjectBlobFault(ProcessInfo* machine) = 0;
 	virtual bool canKillProcesses(std::vector<ProcessInfo*> const& availableProcesses,
@@ -339,7 +340,6 @@ public:
 	TSSMode tssMode;
 	std::map<NetworkAddress, bool> corruptWorkerMap;
 	ConfigDBType configDBType;
-	bool blobGranulesEnabled;
 
 	// Used by workloads that perform reconfigurations
 	int testerCount;
@@ -357,7 +357,6 @@ public:
 	bool willRestart = false;
 	bool restarted = false;
 	bool isConsistencyChecked = false;
-	ValidationData validationData;
 
 	bool hasDiffProtocolProcess; // true if simulator is testing a process with a different version
 	bool setDiffProtocol; // true if a process with a different protocol version has been started
@@ -408,7 +407,7 @@ public:
 
 	std::set<std::pair<std::string, unsigned>> corruptedBlocks;
 
-	// Valdiate at-rest encryption guarantees. If enabled, tests should inject a known 'marker' in Key and/or Values
+	// Validate at-rest encryption guarantees. If enabled, tests should inject a known 'marker' in Key and/or Values
 	// inserted into FDB by the workload. On shutdown, all test generated files (under simfdb/) are scanned to find if
 	// 'plaintext marker' is present.
 	Optional<std::string> dataAtRestPlaintextMarker;
@@ -418,6 +417,10 @@ public:
 	std::set<IPAddress> httpServerIps;
 	int nextHTTPPort = 5000;
 	bool httpProtected = false;
+
+	// Truly simulator-global registry for MockS3ServerChaos to prevent duplicate registrations
+	// across all simulated processes (must stay in sync with httpHandlers)
+	std::set<std::string> registeredMockS3ChaosServers;
 
 	flowGlobalType global(int id) const final;
 	void setGlobal(size_t id, flowGlobalType v) final;
@@ -429,6 +432,8 @@ public:
 	// generate authz token for use in simulation environment
 	WipedString makeToken(int64_t tenantId, uint64_t ttlSecondsFromNow);
 
+	// FIXME: simulation is generally discussed as being deterministic and single-threaded. So
+	// explain why we need thread_local variables here and a mutex just below.
 	static thread_local ProcessInfo* currentProcess;
 	static thread_local bool isMainThread;
 
@@ -476,7 +481,9 @@ FDB_BOOLEAN_PARAM(ForceDisable);
 // if the disabling time has been extended. The caller should retry after
 // the specified time has elapsed. If flag is true, don't extend the time
 // and disable the connection failures immediately.
-double disableConnectionFailures(std::string const& context, ForceDisable flag = ForceDisable::True);
+double disableConnectionFailures(std::string const& context,
+                                 ForceDisable flag = ForceDisable::True,
+                                 double duration = DISABLE_CONNECTION_FAILURE_FOREVER);
 
 // Extend connection failures in simulation
 void extendConnectionFailures(std::string const& context, double duration);

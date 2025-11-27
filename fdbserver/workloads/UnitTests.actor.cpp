@@ -45,8 +45,6 @@ void forceLinkRESTKmsConnectorTest();
 void forceLinkCompressionUtilsTest();
 void forceLinkAtomicTests();
 void forceLinkIdempotencyIdTests();
-void forceLinkBlobConnectionProviderTests();
-void forceLinkArenaStringTests();
 void forceLinkActorCollectionTests();
 void forceLinkDDSketchTests();
 void forceLinkCommitProxyTests();
@@ -57,6 +55,7 @@ void forceLinkRESTSimKmsVaultTest();
 void forceLinkActorFuzzUnitTests();
 void forceLinkGrpcTests();
 void forceLinkGrpcTests2();
+void forceLinkSimpleCounterTests();
 
 struct UnitTestWorkload : TestWorkload {
 	static constexpr auto NAME = "UnitTests";
@@ -123,8 +122,6 @@ struct UnitTestWorkload : TestWorkload {
 		forceLinkCompressionUtilsTest();
 		forceLinkAtomicTests();
 		forceLinkIdempotencyIdTests();
-		forceLinkBlobConnectionProviderTests();
-		forceLinkArenaStringTests();
 		forceLinkActorCollectionTests();
 		forceLinkDDSketchTests();
 		forceLinkWipedStringTests();
@@ -132,6 +129,7 @@ struct UnitTestWorkload : TestWorkload {
 		forceLinkSimKmsVaultTests();
 		forceLinkRESTSimKmsVaultTest();
 		forceLinkActorFuzzUnitTests();
+		forceLinkSimpleCounterTests();
 
 #ifdef FLOW_GRPC_ENABLED
 		forceLinkGrpcTests();
@@ -207,7 +205,8 @@ struct UnitTestWorkload : TestWorkload {
 			TraceEvent(SevInfo, "RunningUnitTest")
 			    .detail("Name", test->name)
 			    .detail("File", test->file)
-			    .detail("Line", test->line);
+			    .detail("Line", test->line)
+			    .detail("Rand", deterministicRandom()->randomInt(0, 100001));
 
 			state Error result = success();
 			state double start_now = now();

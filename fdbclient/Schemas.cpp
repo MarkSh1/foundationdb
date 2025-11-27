@@ -92,7 +92,6 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                   "grv_proxy",
                   "master",
                   "test",
-                  "storage_cache",
                   "blob_worker"
                ]
             },
@@ -138,7 +137,6 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
                         "blob_worker",
                         "encrypt_key_proxy",
                         "consistency_scan",
-                        "storage_cache",
                         "router",
                         "coordinator"
                      ]
@@ -995,7 +993,6 @@ const KeyRef JSONSchemas::statusSchema = R"statusSchema(
              "aggressive",
              "gradual"
          ]},
-         "blob_granules_enabled":0,
          "tenant_mode": {
              "$enum":[
              "disabled",

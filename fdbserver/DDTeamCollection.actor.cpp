@@ -22,7 +22,6 @@
 
 #include "fdbclient/SystemData.h"
 #include "fdbrpc/simulator.h"
-#include "fdbserver/BlobMigratorInterface.h"
 #include "fdbserver/DDTeamCollection.h"
 #include "fdbserver/ExclusionTracker.actor.h"
 #include "fdbserver/DataDistributionTeam.h"
@@ -710,6 +709,7 @@ public:
 		}
 	}
 
+	// FIXME: describe purpose
 	ACTOR static Future<Void> addSubsetOfEmergencyTeams(DDTeamCollection* self) {
 		state int idx = 0;
 		state std::vector<Reference<TCServerInfo>> servers;
@@ -763,7 +763,6 @@ public:
 						    self->satisfiesPolicy(servers, self->configuration.storageTeamSize)) {
 							servers.resize(self->configuration.storageTeamSize);
 							self->addTeam(servers, IsInitialTeam::True);
-							// self->traceTeamCollectionInfo(); // Trace at the end of the function
 						} else {
 							tempSet->clear();
 							for (auto it : servers) {
@@ -1375,11 +1374,8 @@ public:
 		state Future<Void> storageMetadataTracker = self->updateStorageMetadata(server);
 		try {
 			loop {
-				state bool isBm = BlobMigratorInterface::isBlobMigrator(server->getLastKnownInterface().id());
-				status.isUndesired =
-				    (!self->disableFailingLaggingServers.get() && server->ssVersionTooFarBehind.get()) || isBm;
-
-				status.isWrongConfiguration = isBm;
+				status.isUndesired = (!self->disableFailingLaggingServers.get() && server->ssVersionTooFarBehind.get());
+				status.isWrongConfiguration = false;
 				status.isWiggling = false;
 				hasWrongDC = !self->isCorrectDC(*server);
 				hasInvalidLocality =
@@ -1484,6 +1480,7 @@ public:
 				}
 				otherChanges.push_back(self->excludedServers.onChange(worstAddr));
 
+				// FIXME: explain the 3 here
 				for (int i = 0; i < 3; i++) {
 					if (i > 0 && !server->getLastKnownInterface().secondaryAddress().present()) {
 						break;
@@ -2003,7 +2000,7 @@ public:
 		loop {
 			// In case the machineTeamRemover cause problems in production, we can disable it
 			if (SERVER_KNOBS->TR_FLAG_DISABLE_MACHINE_TEAM_REMOVER) {
-				return Void(); // Directly return Void()
+				return Void();
 			}
 
 			// To avoid removing machine teams too fast, which is unlikely happen though
@@ -2031,20 +2028,6 @@ public:
 			if (healthyMachineCount != self->machine_info.size()) {
 				continue;
 			}
-
-			// From this point, all machine teams and server teams should be healthy, because we wait above
-			// until processingUnhealthy is done, and all machines are healthy
-
-			// Sanity check all machine teams are healthy
-			//		int currentHealthyMTCount = self->getHealthyMachineTeamCount();
-			//		if (currentHealthyMTCount != self->machineTeams.size()) {
-			//			TraceEvent(SevError, "InvalidAssumption")
-			//			    .detail("HealthyMachineCount", healthyMachineCount)
-			//			    .detail("Machines", self->machine_info.size())
-			//			    .detail("CurrentHealthyMTCount", currentHealthyMTCount)
-			//			    .detail("MachineTeams", self->machineTeams.size());
-			//			self->traceAllInfo(true);
-			//		}
 
 			// In most cases, all machine teams should be healthy teams at this point.
 			int desiredMachineTeams = SERVER_KNOBS->DESIRED_TEAMS_PER_SERVER * healthyMachineCount;
@@ -2130,7 +2113,7 @@ public:
 		loop {
 			// In case the serverTeamRemover cause problems in production, we can disable it
 			if (SERVER_KNOBS->TR_FLAG_DISABLE_SERVER_TEAM_REMOVER) {
-				return Void(); // Directly return Void()
+				return Void();
 			}
 
 			double removeServerTeamDelay = SERVER_KNOBS->TR_REMOVE_SERVER_TEAM_DELAY;
