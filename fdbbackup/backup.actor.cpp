@@ -4794,22 +4794,35 @@ int main() {
 
 	printf("=== Running ParsedArgs Tests ===\n");
 
-	auto testOptionParsing = [](std::vector<std::string> args,
+	auto testOptionParsing = [](std::initializer_list<const char*> args,
 								const std::vector<std::string>& expectedOptions = {},
 								bool shouldSucceed = true,
 								const char* testName = "",
 								bool expectCSimpleOptions = false) -> bool {
 		printf("\n--- Test: %s ---\n", testName);
+		static std::vector<std::string> persistentArgs;
+		persistentArgs.clear();
+		persistentArgs.reserve(args.size());
+		for (const char* arg : args) {
+			persistentArgs.emplace_back(arg);
+		}
+		int argc = static_cast<int>(persistentArgs.size());
 
 		std::vector<char*> argv;
-		for (auto& arg : args) {
+		for (auto& arg : persistentArgs) {
 			argv.push_back(arg.data());
 		}
 		argv.push_back(nullptr);
 
 		int argcNew {};
 		char** argvNew {};
-		bool success = reorderArguments(args.size(), argv.data(), argcNew, argvNew);
+
+		printf("DEBUG: argc: %d\n", argc);
+		for (int i = 0; i < argv.size(); ++i) {
+			printf("DEBUG: argv[%d]: %s\n", i, argv[i]);
+		}
+
+		bool success = reorderArguments(argc, argv.data(), argcNew, argvNew);
 
 		printf("DEBUG: argcNew: %d\n", argcNew);
 		for (int i = 0; i < argcNew; ++i) {
