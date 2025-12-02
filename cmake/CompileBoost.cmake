@@ -67,6 +67,7 @@ function(compile_boost)
                        --with-libraries=${BOOTSTRAP_LIBRARIES}
                        --with-toolset=${BOOST_TOOLSET}
     BUILD_COMMAND      ${B2_COMMAND}
+    # Added -d0 flag to B2_COMMAND to suppress informational Boost build output
                        -d0
                        link=static
                        ${COMPILE_BOOST_BUILD_ARGS}

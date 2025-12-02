@@ -42,6 +42,8 @@ jobs:
   build:
     needs: [calc_ver]
     env:
+      # There are not enough free 19 Gb mounted in "/" to build and create rpm and deb packages. 
+      # So, we use /mnt/bld which is mounted to a bigger space. In /mnt there is 66 Gb free space in github action server.
       BLD_DIR: /mnt/bld
 
     strategy:
@@ -84,6 +86,9 @@ jobs:
             ${{needs.calc_ver.outputs.build_ver}} \
             ${{needs.calc_ver.outputs.release_flag}} \
             ${{ matrix.parallel }}
+          
+          echo "=== Disk space after building and creating packages ==="
+          df -h
 
       # - name: Minimal tests
       #  working-directory: ${{ env.BLD_DIR }}
