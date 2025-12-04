@@ -41,6 +41,10 @@ jobs:
 
   build:
     needs: [calc_ver]
+    env:
+      # There are not enough free 19 Gb mounted in "/" to build and create rpm and deb packages. 
+      # So, we use /mnt/bld which is mounted to a bigger space. In /mnt there is 66 Gb free space in github action server.
+      BLD_DIR: /mnt/bld
 
     strategy:
       matrix:
@@ -63,8 +67,11 @@ jobs:
 
       - name: Build
         run: |
-          sudo mkdir -p /mnt/bld
-          sudo chmod 777 /mnt/bld
+          sudo mkdir -p ${{ env.BLD_DIR }}
+          sudo chmod 777 ${{ env.BLD_DIR }}
+
+          echo "=== Disk space before build ==="
+          df -h
 
           echo "=== Disk space before build ==="
           df -h
@@ -75,7 +82,7 @@ jobs:
             --mount=type=tmpfs,dst=/var/tmp \
             --security-opt label=disable \
             --mount=type=bind,src=${{github.workspace}},dst=/home/runner/src,readonly \
-            --mount=type=bind,src=/mnt/bld,dst=/home/runner/bld \
+            --mount=type=bind,src=${{ env.BLD_DIR }},dst=/home/runner/bld \
             $use_image \
             /home/runner/src/build-scripts/for-${{ matrix.for }}/build-on-${{ matrix.build_on }}.bash \
             ${{needs.calc_ver.outputs.project_ver}} \
@@ -83,11 +90,11 @@ jobs:
             ${{needs.calc_ver.outputs.release_flag}} \
             ${{ matrix.parallel }}
 
-          echo "=== Disk space after build and cpack ==="
+          echo "=== Disk space after building and creating packages ==="
           df -h
 
       # - name: Minimal tests
-      #  working-directory: /mnt/bld
+      #  working-directory: ${{ env.BLD_DIR }}
       #  shell: bash
       #  run: ctest --output-on-failure -V
 
@@ -95,7 +102,7 @@ jobs:
         uses: nanoufo/action-upload-artifacts-and-release-assets@v2
         with:
           path: |
-            /mnt/bld/linux/packages/*${{needs.calc_ver.outputs.full_ver}}*
+            ${{ env.BLD_DIR }}/linux/packages/*${{needs.calc_ver.outputs.full_ver}}*
           upload-release-files: ${{ needs.calc_ver.outputs.release_flag }}
           release-upload-url: ${{ needs.calc_ver.outputs.release_upload_url }}
           if-no-files-found: error
