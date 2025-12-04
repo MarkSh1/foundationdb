@@ -320,7 +320,6 @@ def process_traces(
 
 class RestartTestPolicy:
     def __init__(self, name, old_binary, new_binary):
-        print(f"!!!! name: {name}, old_binary: {old_binary}, new_binary: {new_binary}")
         # Default is to use the same binary for the restart test, unless constraints are satisfied.
         self._first_binary = new_binary
         self._second_binary = new_binary
@@ -329,7 +328,6 @@ class RestartTestPolicy:
         old_binary_version_raw = subprocess.check_output(
             [old_binary, "--version"]
         ).decode("utf-8")
-        print(f"!!!! old_binary_version_raw: {old_binary_version_raw}")
         match = re.match(
             "FoundationDB.*\(v([0-9]+\.[0-9]+\.[0-9]+)", old_binary_version_raw
         )

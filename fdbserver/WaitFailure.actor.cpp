@@ -19,8 +19,10 @@
  */
 
 #include "fdbrpc/FailureMonitor.h"
+#include "fdbrpc/fdbrpc.h"
 #include "flow/Deque.h"
 #include "fdbserver/Knobs.h"
+
 #include "flow/actorcompiler.h" // This must be the last #include.
 
 ACTOR Future<Void> waitFailureServer(FutureStream<ReplyPromise<Void>> waitFailure) {
@@ -41,6 +43,7 @@ ACTOR Future<Void> waitFailureClient(RequestStream<ReplyPromise<Void>> waitFailu
                                      double reactionTime,
                                      double reactionSlope,
                                      bool trace,
+                                     Optional<Standalone<StringRef>> traceMsg,
                                      TaskPriority taskID) {
 	loop {
 		try {
@@ -49,9 +52,12 @@ ACTOR Future<Void> waitFailureClient(RequestStream<ReplyPromise<Void>> waitFailu
 			    wait(waitFailure.getReplyUnlessFailedFor(ReplyPromise<Void>(), reactionTime, reactionSlope, taskID));
 			if (!x.present()) {
 				if (trace) {
-					TraceEvent("WaitFailureClient")
-					    .detail("FailedEndpoint", waitFailure.getEndpoint().getPrimaryAddress().toString())
+					TraceEvent te("WaitFailureClient");
+					te.detail("FailedEndpoint", waitFailure.getEndpoint().getPrimaryAddress().toString())
 					    .detail("Token", waitFailure.getEndpoint().token);
+					if (traceMsg.present()) {
+						te.detail("Context", traceMsg.get());
+					}
 				}
 				return Void();
 			}
@@ -71,7 +77,12 @@ ACTOR Future<Void> waitFailureClientStrict(RequestStream<ReplyPromise<Void>> wai
                                            double failureReactionTime,
                                            TaskPriority taskID) {
 	loop {
-		wait(waitFailureClient(waitFailure, 0, 0, false, taskID));
+		wait(waitFailureClient(waitFailure,
+		                       /* failureReactionTime */ 0,
+		                       /* failureReactionSlope */ 0,
+		                       /* trace */ false,
+		                       /* traceMsg */ Optional<Standalone<StringRef>>(),
+		                       taskID));
 		wait(delay(failureReactionTime, taskID) ||
 		     IFailureMonitor::failureMonitor().onStateEqual(waitFailure.getEndpoint(), FailureStatus(false)));
 		if (IFailureMonitor::failureMonitor().getState(waitFailure.getEndpoint()).isFailed()) {

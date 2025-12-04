@@ -21,12 +21,12 @@
 #include "fdbrpc/Locality.h"
 
 const UID LocalityData::UNSET_ID = UID(0x0ccb4e0feddb5583, 0x010f6b77d9d10ece);
-const StringRef LocalityData::keyProcessId = "processid"_sr;
-const StringRef LocalityData::keyZoneId = "zoneid"_sr;
-const StringRef LocalityData::keyDcId = "dcid"_sr;
-const StringRef LocalityData::keyMachineId = "machineid"_sr;
-const StringRef LocalityData::keyDataHallId = "data_hall"_sr;
-const StringRef LocalityData::ExcludeLocalityPrefix = "locality_"_sr;
+alignas(8) const StringRef LocalityData::keyProcessId = "processid"_sr;
+alignas(8) const StringRef LocalityData::keyZoneId = "zoneid"_sr;
+alignas(8) const StringRef LocalityData::keyDcId = "dcid"_sr;
+alignas(8) const StringRef LocalityData::keyMachineId = "machineid"_sr;
+alignas(8) const StringRef LocalityData::keyDataHallId = "data_hall"_sr;
+alignas(8) const StringRef LocalityData::ExcludeLocalityPrefix = "locality_"_sr;
 
 ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const {
 	switch (role) {
@@ -41,7 +41,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::WorstFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 		default:
 			return ProcessClass::NeverAssign;
@@ -58,7 +57,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::WorstFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -76,7 +74,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -94,7 +91,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -112,7 +108,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -130,7 +125,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -148,7 +142,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -190,7 +183,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -208,7 +200,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -226,7 +217,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -244,7 +234,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -262,7 +251,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:
@@ -285,13 +273,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 		default:
 			return ProcessClass::NeverAssign;
 		}
-	case ProcessClass::StorageCache:
-		switch (_class) {
-		case ProcessClass::StorageCacheClass:
-			return ProcessClass::BestFit;
-		default:
-			return ProcessClass::NeverAssign;
-		}
 	case ProcessClass::EncryptKeyProxy:
 		switch (_class) {
 		case ProcessClass::EncryptKeyProxyClass:
@@ -304,7 +285,6 @@ ProcessClass::Fitness ProcessClass::machineClassFitness(ClusterRole role) const 
 			return ProcessClass::OkayFit;
 		case ProcessClass::CoordinatorClass:
 		case ProcessClass::TesterClass:
-		case ProcessClass::StorageCacheClass:
 		case ProcessClass::BlobWorkerClass:
 			return ProcessClass::NeverAssign;
 		default:

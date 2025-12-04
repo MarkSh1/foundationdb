@@ -24,10 +24,7 @@
 
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/CommitTransaction.h"
-#include "fdbclient/MutationList.h"
-#include "fdbclient/StorageServerInterface.h"
 #include "fdbrpc/TimedRequest.h"
-#include <iterator>
 
 struct TLogInterface {
 	constexpr static FileIdentifier file_identifier = 16308510;
@@ -222,20 +219,23 @@ struct TLogPeekRequest {
 	Optional<std::pair<UID, int>> sequence;
 	ReplyPromise<TLogPeekReply> reply;
 	Optional<Version> end; // when set is exclusive to the desired range
+	// @todo investigate whether we really need this variable (and if not needed, remove it).
+	Optional<bool> returnEmptyIfStopped;
 
 	TLogPeekRequest(Version begin,
 	                Tag tag,
 	                bool returnIfBlocked,
 	                bool onlySpilled,
 	                Optional<std::pair<UID, int>> sequence = Optional<std::pair<UID, int>>(),
-	                Optional<Version> end = Optional<Version>())
+	                Optional<Version> end = Optional<Version>(),
+	                Optional<bool> returnEmptyIfStopped = Optional<bool>())
 	  : begin(begin), tag(tag), returnIfBlocked(returnIfBlocked), onlySpilled(onlySpilled), sequence(sequence),
-	    end(end) {}
+	    end(end), returnEmptyIfStopped(returnEmptyIfStopped) {}
 	TLogPeekRequest() {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, begin, tag, returnIfBlocked, onlySpilled, sequence, reply, end);
+		serializer(ar, begin, tag, returnIfBlocked, onlySpilled, sequence, reply, end, returnEmptyIfStopped);
 	}
 };
 
@@ -262,18 +262,21 @@ struct TLogPeekStreamRequest {
 	int limitBytes;
 	Optional<Version> end; // when set is exclusive to the desired range
 	ReplyPromiseStream<TLogPeekStreamReply> reply;
+	Optional<bool> returnEmptyIfStopped;
 
 	TLogPeekStreamRequest() {}
 	TLogPeekStreamRequest(Version version,
 	                      Tag tag,
 	                      bool returnIfBlocked,
 	                      int limitBytes,
-	                      Optional<Version> end = Optional<Version>())
-	  : begin(version), tag(tag), returnIfBlocked(returnIfBlocked), limitBytes(limitBytes), end(end) {}
+	                      Optional<Version> end = Optional<Version>(),
+	                      Optional<bool> returnEmptyIfStopped = Optional<bool>())
+	  : begin(version), tag(tag), returnIfBlocked(returnIfBlocked), limitBytes(limitBytes), end(end),
+	    returnEmptyIfStopped(returnEmptyIfStopped) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
-		serializer(ar, begin, tag, returnIfBlocked, limitBytes, reply, end);
+		serializer(ar, begin, tag, returnIfBlocked, limitBytes, reply, end, returnEmptyIfStopped);
 	}
 };
 

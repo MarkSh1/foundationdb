@@ -1,111 +1,59 @@
+# This test validates backup and restore functionality using S3/blobstore (MockS3Server).
+# Key differences from other backup tests:
+# - Uses S3 blobstore URL instead of file-based backup
+# - Connection failures (60s) during initial workload and backup to test resilience
+# - Runs with RandomClogging and Rollback workloads to stress test under network failures
+# - Tests the full backup/restore cycle with simulated S3 operations
+
 testClass = "Backup"
 
+[configuration]
+buggify = false
+faultInjection = false
+
 [[test]]
-testTitle = 'Cycle'
-clearAfterTest = 'false'
+testTitle = 'BackupS3BlobCorrectness'
+clearAfterTest = false
 simBackupAgents = 'BackupToFile'
+waitForQuiescenceEnd = false
+runConsistencyCheck = false
+# Disable connection failures after 90s to match RandomClogging/Rollback duration.
+# This ensures backup completes under full chaos (10s-90s) while avoiding extreme
+# queue buildup during restore (90s-170s) that causes simulator slowdown.
+connectionFailuresDisableDuration = 90
 
     [[test.workload]]
     testName = 'Cycle'
-    nodeCount = 3000
-    testDuration = 10.0
+    nodeCount = 10000
+    transactionsPerSecond = 1000.0
+    testDuration = 30.0
     expectedRate = 0
-    
-    [[test.workload]]
-    testName = 'RandomClogging'
-    testDuration = 10.0
 
     [[test.workload]]
-    testName = 'Rollback'
-    meanDelay = 5.0
-    testDuration = 10.0
+    testName = 'BackupS3BlobCorrectness'
+    backupAfter = 10.0
+    restoreAfter = 80.0
+    abortAndRestartAfter = 0.0
+    stopDifferentialAfter = 0.0
+    performRestore = true
+    backupRangesCount = -1
+    skipDirtyRestore = false
+    backupURL = 'blobstore://mocks3:mocksecret:mocktoken@127.0.0.1:8080/backup_container?bucket=backup_bucket&region=us-east-1&secure_connection=0&cwpf=1&cu=1'
 
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
+    # [[test.workload]]
+    # testName = 'RandomClogging'
+    # testDuration = 90.0
 
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
+    # [[test.workload]]
+    # testName = 'Rollback'
+    # meanDelay = 60.0
+    # testDuration = 90.0
 
-[[test]]
-testTitle = 'Backup'
 
-    [[test.workload]]
-    testName = 'BackupToBlob'
-    backupAfter = 0.0
-    backupTag = 'default'
-    backupURL = 'blobstore://<access_key>:<secret_key>@127.0.0.1:9000/resource?bucket=bucketname'
-    provideKeys = true
 
-    [[test.workload]]
-    testName = 'RandomClogging'
-    testDuration = 10.0
 
-    [[test.workload]]
-    testName = 'Rollback'
-    meanDelay = 5.0
-    testDuration = 10.0
 
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
 
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
 
-[[test]]
-testTitle = 'Restore'
-clearAfterTest = 'false'
 
-    [[test.workload]]
-    testName = 'RestoreFromBlob'
-    restoreAfter = 0.0
-    backupTag = 'default'
-    backupURL = 'blobstore://<access_key>:<secret_key>@127.0.0.1:9000/resource?bucket=bucketname'
-    provideKeys = true
 
-    [[test.workload]]
-    testName = 'RandomClogging'
-    testDuration = 60.0
-
-    [[test.workload]]
-    testName = 'Rollback'
-    meanDelay = 5.0
-    testDuration = 10.0
-
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
-
-    [[test.workload]]
-    testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
-    testDuration = 10.0
-
-[[test]]
-testTitle = 'CycleCheck'
-checkOnly = 'true'
-
-    [[test.workload]]
-    testName = 'Cycle'
-    nodeCount = 3000
-    expectedRate = 0

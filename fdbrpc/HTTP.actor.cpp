@@ -28,6 +28,7 @@
 #include "libb64/encode.h"
 #include "flow/Knobs.h"
 #include <cctype>
+#include <sstream>
 #include "flow/IConnection.h"
 #include <unordered_map>
 
@@ -67,6 +68,28 @@ std::string urlEncode(const std::string& s) {
 	return o;
 }
 
+std::string urlDecode(const std::string& encoded) {
+	std::string decoded;
+	decoded.reserve(encoded.size());
+	for (size_t i = 0; i < encoded.length(); ++i) {
+		if (encoded[i] == '%' && i + 2 < encoded.length()) {
+			int value;
+			std::istringstream is(encoded.substr(i + 1, 2));
+			if (is >> std::hex >> value) {
+				decoded += static_cast<char>(value);
+				i += 2;
+			} else {
+				decoded += encoded[i];
+			}
+		} else if (encoded[i] == '+') {
+			decoded += ' ';
+		} else {
+			decoded += encoded[i];
+		}
+	}
+	return decoded;
+}
+
 template <typename T>
 std::string ResponseBase<T>::getCodeDescription() {
 	if (code == HTTP_STATUS_CODE_OK) {
@@ -77,8 +100,14 @@ std::string ResponseBase<T>::getCodeDescription() {
 		return "Accepted";
 	} else if (code == HTTP_STATUS_CODE_NO_CONTENT) {
 		return "No Content";
+	} else if (code == HTTP_STATUS_CODE_PARTIAL_CONTENT) {
+		return "Partial Content";
+	} else if (code == HTTP_STATUS_CODE_BAD_REQUEST) {
+		return "Bad Request";
 	} else if (code == HTTP_STATUS_CODE_UNAUTHORIZED) {
 		return "Unauthorized";
+	} else if (code == HTTP_STATUS_CODE_NOT_FOUND) {
+		return "Not Found";
 	} else if (code == HTTP_STATUS_CODE_NOT_ACCEPTABLE) {
 		return "Not Acceptable";
 	} else if (code == HTTP_STATUS_CODE_TIMEOUT) {
@@ -522,6 +551,7 @@ void HTTP::OutgoingResponse::reset() {
 	data.headers = HTTP::Headers();
 	data.content->discardAll();
 	data.contentLen = 0;
+	code = 200; // Reset response code to default success status
 }
 
 // Reads an HTTP response from a network connection
@@ -533,17 +563,15 @@ ACTOR Future<Void> read_http_response(Reference<HTTP::IncomingResponse> r,
 	state std::string buf;
 	state size_t pos = 0;
 
-	// Read HTTP request line
+	// Read HTTP response line
 	size_t lineLen = wait(read_delimited_into_string(conn, "\r\n", &buf, pos));
 
 	int reachedEnd = -1;
-	sscanf(buf.c_str() + pos, "HTTP/%f %d%n", &r->version, &r->code, &reachedEnd);
-	if (reachedEnd < 0) {
-		TraceEvent(SevWarn, "HTTPResponseCodeNotFound")
-		    .detail("Buffer", buf)
+	if (sscanf(buf.c_str() + pos, "HTTP/%f %d%n", &r->version, &r->code, &reachedEnd) < 2 || reachedEnd < 0) {
+		TraceEvent(SevWarn, "HTTPResponseParseFailure")
+		    .detail("Buffer", buf.substr(pos, std::min(lineLen, (size_t)100)))
 		    .detail("Pos", pos)
-		    .detail("LineLen", lineLen)
-		    .log();
+		    .detail("LineLen", lineLen);
 		throw http_bad_response();
 	}
 

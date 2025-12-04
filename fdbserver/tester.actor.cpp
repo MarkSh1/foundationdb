@@ -1396,9 +1396,8 @@ ACTOR Future<Void> auditStorageCorrectness(Reference<AsyncVar<ServerDBInfo>> dbI
 ACTOR Future<Void> checkConsistency(Database cx,
                                     std::vector<TesterInterface> testers,
                                     bool doQuiescentCheck,
-                                    bool doCacheCheck,
                                     bool doTSSCheck,
-                                    double quiescentWaitTimeout,
+                                    double maxDDRunTime,
                                     double softTimeLimit,
                                     double databasePingDelay,
                                     Reference<AsyncVar<ServerDBInfo>> dbInfo) {
@@ -1414,14 +1413,10 @@ ACTOR Future<Void> checkConsistency(Database cx,
 
 	Standalone<VectorRef<KeyValueRef>> options;
 	StringRef performQuiescent = "false"_sr;
-	StringRef performCacheCheck = "false"_sr;
 	StringRef performTSSCheck = "false"_sr;
 	if (doQuiescentCheck) {
 		performQuiescent = "true"_sr;
 		spec.restorePerpetualWiggleSetting = false;
-	}
-	if (doCacheCheck) {
-		performCacheCheck = "true"_sr;
 	}
 	if (doTSSCheck) {
 		performTSSCheck = "true"_sr;
@@ -1432,11 +1427,9 @@ ACTOR Future<Void> checkConsistency(Database cx,
 	spec.timeout = 32000;
 	options.push_back_deep(options.arena(), KeyValueRef("testName"_sr, "ConsistencyCheck"_sr));
 	options.push_back_deep(options.arena(), KeyValueRef("performQuiescentChecks"_sr, performQuiescent));
-	options.push_back_deep(options.arena(), KeyValueRef("performCacheCheck"_sr, performCacheCheck));
 	options.push_back_deep(options.arena(), KeyValueRef("performTSSCheck"_sr, performTSSCheck));
-	options.push_back_deep(
-	    options.arena(),
-	    KeyValueRef("quiescentWaitTimeout"_sr, ValueRef(options.arena(), format("%f", quiescentWaitTimeout))));
+	options.push_back_deep(options.arena(),
+	                       KeyValueRef("maxDDRunTime"_sr, ValueRef(options.arena(), format("%f", maxDDRunTime))));
 	options.push_back_deep(options.arena(), KeyValueRef("distributed"_sr, "false"_sr));
 	spec.options.push_back_deep(spec.options.arena(), options);
 
@@ -2053,9 +2046,8 @@ ACTOR Future<bool> runTest(Database cx,
 				wait(timeoutError(checkConsistency(cx,
 				                                   testers,
 				                                   quiescent,
-				                                   spec.runConsistencyCheckOnCache,
 				                                   spec.runConsistencyCheckOnTSS,
-				                                   10000.0,
+				                                   spec.maxDDRunTime > 0 ? spec.maxDDRunTime : 10000.0,
 				                                   5000,
 				                                   spec.databasePingDelay,
 				                                   dbInfo),
@@ -2132,7 +2124,7 @@ std::map<std::string, std::function<void(const std::string&)>> testSpecGlobalKey
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedMinimumRegions", ""); } },
 	{ "logAntiQuorum",
 	  [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedLogAntiQuorum", ""); } },
-	{ "buggify", [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedBuggify", ""); } },
+	{ "buggify", [](const std::string& value) { TraceEvent("TestParserTest").detail("ParsedBuggify", value); } },
 	// The test harness handles NewSeverity events specially.
 	{ "StderrSeverity", [](const std::string& value) { TraceEvent("StderrSeverity").detail("NewSeverity", value); } },
 	{ "ClientInfoLogging",
@@ -2219,15 +2211,16 @@ std::map<std::string, std::function<void(const std::string& value, TestSpec* spe
 	      spec->runConsistencyCheck = (value == "true");
 	      TraceEvent("TestParserTest").detail("ParsedRunConsistencyCheck", spec->runConsistencyCheck);
 	  } },
-	{ "runConsistencyCheckOnCache",
-	  [](const std::string& value, TestSpec* spec) {
-	      spec->runConsistencyCheckOnCache = (value == "true");
-	      TraceEvent("TestParserTest").detail("ParsedRunConsistencyCheckOnCache", spec->runConsistencyCheckOnCache);
-	  } },
 	{ "runConsistencyCheckOnTSS",
 	  [](const std::string& value, TestSpec* spec) {
 	      spec->runConsistencyCheckOnTSS = (value == "true");
 	      TraceEvent("TestParserTest").detail("ParsedRunConsistencyCheckOnTSS", spec->runConsistencyCheckOnTSS);
+	  } },
+	{ "maxDDRunTime",
+	  [](const std::string& value, TestSpec* spec) {
+	      sscanf(value.c_str(), "%lf", &(spec->maxDDRunTime));
+	      ASSERT(spec->maxDDRunTime >= 0);
+	      TraceEvent("TestParserTest").detail("ParsedMaxDDRunTime", spec->maxDDRunTime);
 	  } },
 	{ "waitForQuiescence",
 	  [](const std::string& value, TestSpec* spec) {
@@ -2625,10 +2618,6 @@ void encryptionAtRestPlaintextMarkerCheck() {
 					CODE_PROBE(true,
 					           "EncryptionAtRestPlaintextMarkerCheckScanned storage file scanned",
 					           probe::decoration::rare);
-				} else if (itr->path().string().find("fdbblob") != std::string::npos) {
-					CODE_PROBE(true,
-					           "EncryptionAtRestPlaintextMarkerCheckScanned BlobGranule file scanned",
-					           probe::decoration::rare);
 				} else if (itr->path().string().find("logqueue") != std::string::npos) {
 					CODE_PROBE(
 					    true, "EncryptionAtRestPlaintextMarkerCheckScanned TLog file scanned", probe::decoration::rare);
@@ -2655,40 +2644,14 @@ ACTOR Future<Void> disableConnectionFailuresAfter(double seconds, std::string co
 		wait(delay(seconds));
 		while (true) {
 			double delaySeconds = disableConnectionFailures(context, ForceDisable::False);
-			if (delaySeconds > 0.001) {
+			if (delaySeconds > DISABLE_CONNECTION_FAILURE_MIN_INTERVAL) {
 				wait(delay(delaySeconds));
 			} else {
+				// disableConnectionFailures will always take effect if less than
+				// DISABLE_CONNECTION_FAILURE_MIN_INTERVAL is returned.
 				break;
 			}
 		}
-	}
-	return Void();
-}
-
-ACTOR Future<Void> disableBackupWorker(Database cx) {
-	DatabaseConfiguration configuration = wait(getDatabaseConfiguration(cx));
-	if (!configuration.backupWorkerEnabled) {
-		TraceEvent("BackupWorkerAlreadyDisabled");
-		return Void();
-	}
-	ConfigurationResult res = wait(ManagementAPI::changeConfig(cx.getReference(), "backup_worker_enabled:=0", true));
-	if (res != ConfigurationResult::SUCCESS) {
-		TraceEvent("BackupWorkerDisableFailed").detail("Result", res);
-		throw operation_failed();
-	}
-	return Void();
-}
-
-ACTOR Future<Void> enableBackupWorker(Database cx) {
-	DatabaseConfiguration configuration = wait(getDatabaseConfiguration(cx));
-	if (configuration.backupWorkerEnabled) {
-		TraceEvent("BackupWorkerAlreadyEnabled");
-		return Void();
-	}
-	ConfigurationResult res = wait(ManagementAPI::changeConfig(cx.getReference(), "backup_worker_enabled:=1", true));
-	if (res != ConfigurationResult::SUCCESS) {
-		TraceEvent("BackupWorkerEnableFailed").detail("Result", res);
-		throw operation_failed();
 	}
 	return Void();
 }
@@ -2924,10 +2887,22 @@ ACTOR Future<Void> runTests(Reference<AsyncVar<Optional<struct ClusterController
 		}
 	}
 
-	enableConnectionFailures("Tester", FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS);
-	state Future<Void> disabler = disableConnectionFailuresAfter(FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS, "Tester");
+	// Use the first test's connectionFailuresDisableDuration if set
+	state double connectionFailuresDisableDuration = 0.0;
+	if (!tests.empty() && tests[0].simConnectionFailuresDisableDuration > 0) {
+		connectionFailuresDisableDuration = tests[0].simConnectionFailuresDisableDuration;
+	}
+
+	if (connectionFailuresDisableDuration > 0) {
+		// Disable connection failures with specified duration
+		disableConnectionFailures("Tester", ForceDisable::True, connectionFailuresDisableDuration);
+	} else {
+		enableConnectionFailures("Tester", FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS);
+		state Future<Void> disabler = disableConnectionFailuresAfter(FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS, "Tester");
+	}
 	state Future<Void> repairDataCenter;
 	if (useDB) {
+		// Keep datacenter repair at the default duration regardless of connection failures setting
 		Future<Void> reconfigure = reconfigureAfter(cx, FLOW_KNOBS->SIM_SPEEDUP_AFTER_SECONDS, dbInfo, "Tester");
 		repairDataCenter = reconfigure;
 	}

@@ -23,6 +23,11 @@
 
 struct TraceEvent;
 
+// FIXME: simulation testing involves injection of a lot of chaos
+// (e.g. from the description here: https://apple.github.io/foundationdb/testing.html).
+// Explain how the specifics in this file differ from normal, background chaos
+// that simulation already puts into the simulated environment.
+
 // Chaos Metrics - We periodically log chaosMetrics to make sure that chaos events are happening
 // Only includes DiskDelays which encapsulates all type delays and BitFlips for now
 // Expand as per need
@@ -33,6 +38,10 @@ struct ChaosMetrics {
 	void clear();
 	unsigned int diskDelays;
 	unsigned int bitFlips;
+	unsigned int s3Errors;
+	unsigned int s3Throttles;
+	unsigned int s3Delays;
+	unsigned int s3Corruptions;
 	double startTime;
 
 	void getFields(TraceEvent* e);
@@ -74,6 +83,50 @@ private: // members
 private: // construction
 	BitFlipper() = default;
 	BitFlipper(BitFlipper const&) = delete;
+};
+
+// S3 Fault Injector - Controls chaos injection rates for S3 operations
+struct S3FaultInjector {
+	static S3FaultInjector* injector();
+
+	// Basic chaos rates (0.0-1.0)
+	void setErrorRate(double rate) { errorRate = rate; }
+	void setThrottleRate(double rate) { throttleRate = rate; }
+	void setDelayRate(double rate) { delayRate = rate; }
+	void setCorruptionRate(double rate) { corruptionRate = rate; }
+	void setMaxDelay(double seconds) { maxDelay = seconds; }
+
+	double getErrorRate() const { return errorRate; }
+	double getThrottleRate() const { return throttleRate; }
+	double getDelayRate() const { return delayRate; }
+	double getCorruptionRate() const { return corruptionRate; }
+	double getMaxDelay() const { return maxDelay; }
+
+	// Operation-specific multipliers
+	void setReadMultiplier(double mult) { readMultiplier = mult; }
+	void setWriteMultiplier(double mult) { writeMultiplier = mult; }
+	void setDeleteMultiplier(double mult) { deleteMultiplier = mult; }
+	void setListMultiplier(double mult) { listMultiplier = mult; }
+
+	double getReadMultiplier() const { return readMultiplier; }
+	double getWriteMultiplier() const { return writeMultiplier; }
+	double getDeleteMultiplier() const { return deleteMultiplier; }
+	double getListMultiplier() const { return listMultiplier; }
+
+private: // members
+	double errorRate = 0.0;
+	double throttleRate = 0.0;
+	double delayRate = 0.0;
+	double corruptionRate = 0.0;
+	double maxDelay = 5.0;
+	double readMultiplier = 1.0;
+	double writeMultiplier = 1.0;
+	double deleteMultiplier = 1.0;
+	double listMultiplier = 1.0;
+
+private: // construction
+	S3FaultInjector() = default;
+	S3FaultInjector(S3FaultInjector const&) = delete;
 };
 
 #endif // FLOW_CHAOSMETRICS_H

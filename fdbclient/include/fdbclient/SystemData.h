@@ -27,7 +27,6 @@
 #include "fdbclient/AccumulativeChecksum.h"
 #include "fdbclient/BulkLoading.h"
 #include "fdbclient/BulkDumping.h"
-#include "fdbclient/BlobWorkerInterface.h" // TODO move the functions that depend on this out of here and into BlobWorkerInterface.h to remove this dependency
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/RangeLock.h"
 #include "fdbclient/StorageServerInterface.h"
@@ -181,23 +180,6 @@ const Value dataMoveValue(const DataMoveMetaData& dataMove);
 UID decodeDataMoveKey(const KeyRef& key);
 DataMoveMetaData decodeDataMoveValue(const ValueRef& value);
 
-// "\xff/storageCacheServer/[[UID]] := StorageServerInterface"
-// This will be added by the cache server on initialization and removed by DD
-// TODO[mpilman]: We will need a way to map uint16_t ids to UIDs in a future
-//                versions. For now caches simply cache everything so the ids
-//                are not yet meaningful.
-extern const KeyRangeRef storageCacheServerKeys;
-extern const KeyRef storageCacheServersPrefix, storageCacheServersEnd;
-const Key storageCacheServerKey(UID id);
-const Value storageCacheServerValue(const StorageServerInterface& ssi);
-
-//    "\xff/storageCache/[[begin]]" := "[[vector<uint16_t>]]"
-extern const KeyRangeRef storageCacheKeys;
-extern const KeyRef storageCachePrefix;
-const Key storageCacheKey(const KeyRef& k);
-const Value storageCacheValue(const std::vector<uint16_t>& serverIndices);
-void decodeStorageCacheValue(const ValueRef& value, std::vector<uint16_t>& serverIndices);
-
 //    "\xff/serverKeys/[[serverID]]/[[begin]]" := "[[serverKeysTrue]]" |" [[serverKeysFalse]]"
 //	An internal mapping of what shards any given server currently has ownership of
 //	Using the serverID as a prefix, then followed by the beginning of the shard range
@@ -234,19 +216,6 @@ extern const ValueRef conflictingKeysTrue, conflictingKeysFalse;
 extern const KeyRangeRef writeConflictRangeKeysRange;
 extern const KeyRangeRef readConflictRangeKeysRange;
 extern const KeyRangeRef ddStatsRange;
-
-extern const KeyRef cacheKeysPrefix;
-
-const Key cacheKeysKey(uint16_t idx, const KeyRef& key);
-const Key cacheKeysPrefixFor(uint16_t idx);
-uint16_t cacheKeysDecodeIndex(const KeyRef& key);
-KeyRef cacheKeysDecodeKey(const KeyRef& key);
-
-extern const KeyRef cacheChangeKey;
-extern const KeyRangeRef cacheChangeKeys;
-extern const KeyRef cacheChangePrefix;
-const Key cacheChangeKeyFor(uint16_t idx);
-uint16_t cacheChangeKeyDecodeIndex(const KeyRef& key);
 
 // "\xff/tss/[[serverId]]" := "[[tssId]]"
 extern const KeyRangeRef tssMappingKeys;
@@ -721,165 +690,11 @@ extern const ValueRef writeRecoveryKeyTrue;
 //	Allows incremental restore to read and set starting version for consistency.
 extern const KeyRef snapshotEndVersionKey;
 
-extern const KeyRangeRef changeFeedKeys;
-enum class ChangeFeedStatus { CHANGE_FEED_CREATE = 0, CHANGE_FEED_STOP = 1, CHANGE_FEED_DESTROY = 2 };
-const Value changeFeedValue(KeyRangeRef const& range, Version popVersion, ChangeFeedStatus status);
-std::tuple<KeyRange, Version, ChangeFeedStatus> decodeChangeFeedValue(ValueRef const& value);
-extern const KeyRef changeFeedPrefix;
-extern const KeyRef changeFeedPrivatePrefix;
-
-extern const KeyRangeRef changeFeedDurableKeys;
-extern const KeyRef changeFeedDurablePrefix;
-
-const Value changeFeedDurableKey(Key const& feed, Version version);
-std::pair<Key, Version> decodeChangeFeedDurableKey(ValueRef const& key);
-const Value changeFeedDurableValue(Standalone<VectorRef<MutationRef>> const& mutations, Version knownCommittedVersion);
-std::pair<Standalone<VectorRef<MutationRef>>, Version> decodeChangeFeedDurableValue(ValueRef const& value);
-
-extern const KeyRangeRef changeFeedCacheKeys;
-extern const KeyRef changeFeedCachePrefix;
-
-const Value changeFeedCacheKey(Key const& prefix, Key const& feed, KeyRange const& range, Version version);
-std::tuple<Key, KeyRange, Version> decodeChangeFeedCacheKey(Key const& prefix, ValueRef const& key);
-const Value changeFeedCacheValue(Standalone<VectorRef<MutationsAndVersionRef>> const& mutations);
-Standalone<VectorRef<MutationsAndVersionRef>> decodeChangeFeedCacheValue(ValueRef const& value);
-
-extern const KeyRangeRef changeFeedCacheFeedKeys;
-extern const KeyRef changeFeedCacheFeedPrefix;
-
-const Value changeFeedCacheFeedKey(Key const& prefix, Key const& feed, KeyRange const& range);
-std::tuple<Key, Key, KeyRange> decodeChangeFeedCacheFeedKey(ValueRef const& key);
-const Value changeFeedCacheFeedValue(Version const& version, Version const& popped);
-std::pair<Version, Version> decodeChangeFeedCacheFeedValue(ValueRef const& value);
-
 // Configuration database special keys
 extern const KeyRef configTransactionDescriptionKey;
 extern const KeyRange globalConfigKnobKeys;
 extern const KeyRangeRef configKnobKeys;
 extern const KeyRangeRef configClassKeys;
-
-// blob range special keys
-extern const KeyRef blobRangeChangeKey;
-extern const KeyRangeRef blobRangeKeys;
-extern const KeyRangeRef blobRangeChangeLogKeys;
-extern const KeyRef blobManagerEpochKey;
-
-const Value blobManagerEpochValueFor(int64_t epoch);
-int64_t decodeBlobManagerEpochValue(ValueRef const& value);
-
-// blob granule keys
-extern const StringRef blobRangeActive;
-extern const StringRef blobRangeInactive;
-
-bool isBlobRangeActive(const ValueRef& blobRangeValue);
-
-const Key blobRangeChangeLogReadKeyFor(Version version);
-const Value blobRangeChangeLogValueFor(const Standalone<BlobRangeChangeLogRef>& value);
-Standalone<BlobRangeChangeLogRef> decodeBlobRangeChangeLogValue(ValueRef const& value);
-
-extern const uint8_t BG_FILE_TYPE_DELTA;
-extern const uint8_t BG_FILE_TYPE_SNAPSHOT;
-
-// FIXME: flip order of {filetype, version}
-// \xff\x02/bgf/(granuleUID, {snapshot|delta}, fileVersion) = [[filename]]
-extern const KeyRangeRef blobGranuleFileKeys;
-// \xff\x02/bgm/[[beginKey]] = [[BlobWorkerUID]]
-extern const KeyRangeRef blobGranuleMappingKeys;
-
-// \xff\x02/bgl/(beginKey,endKey) = (epoch, seqno, granuleUID)
-extern const KeyRangeRef blobGranuleLockKeys;
-
-// \xff\x02/bgs/(parentGranuleUID, granuleUID) = [[BlobGranuleSplitState]]
-extern const KeyRangeRef blobGranuleSplitKeys;
-
-// \xff\x02/bgmerge/mergeGranuleId = [[BlobGranuleMergeState]]
-extern const KeyRangeRef blobGranuleMergeKeys;
-
-// \xff\x02/bgmergebounds/beginkey = [[BlobGranuleMergeBoundary]]
-extern const KeyRangeRef blobGranuleMergeBoundaryKeys;
-
-// \xff\x02/bgh/(beginKey,endKey,startVersion) = { granuleUID, [parentGranuleHistoryKeys] }
-extern const KeyRangeRef blobGranuleHistoryKeys;
-
-// \xff\x02/bgp/(start,end) = (version, force)
-extern const KeyRangeRef blobGranulePurgeKeys;
-// \xff\x02/bgpforce/(start) = {1|0} (key range map)
-extern const KeyRangeRef blobGranuleForcePurgedKeys;
-extern const KeyRef blobGranulePurgeChangeKey;
-
-const Key blobGranuleFileKeyFor(UID granuleID, Version fileVersion, uint8_t fileType);
-std::tuple<UID, Version, uint8_t> decodeBlobGranuleFileKey(KeyRef const& key);
-const KeyRange blobGranuleFileKeyRangeFor(UID granuleID);
-
-const Value blobGranuleFileValueFor(
-    StringRef const& filename,
-    int64_t offset,
-    int64_t length,
-    int64_t fullFileLength,
-    int64_t logicalSize,
-    Optional<BlobGranuleCipherKeysMeta> cipherKeysMeta = Optional<BlobGranuleCipherKeysMeta>());
-std::tuple<Standalone<StringRef>, int64_t, int64_t, int64_t, int64_t, Optional<BlobGranuleCipherKeysMeta>>
-decodeBlobGranuleFileValue(ValueRef const& value);
-
-const Value blobGranulePurgeValueFor(Version version, KeyRange range, bool force);
-std::tuple<Version, KeyRange, bool> decodeBlobGranulePurgeValue(ValueRef const& value);
-
-const Value blobGranuleMappingValueFor(UID const& workerID);
-UID decodeBlobGranuleMappingValue(ValueRef const& value);
-
-const Key blobGranuleLockKeyFor(KeyRangeRef const& granuleRange);
-
-const Value blobGranuleLockValueFor(int64_t epochNum, int64_t sequenceNum, UID changeFeedId);
-std::tuple<int64_t, int64_t, UID> decodeBlobGranuleLockValue(ValueRef const& value);
-
-const Key blobGranuleSplitKeyFor(UID const& parentGranuleID, UID const& granuleID);
-std::pair<UID, UID> decodeBlobGranuleSplitKey(KeyRef const& key);
-const KeyRange blobGranuleSplitKeyRangeFor(UID const& parentGranuleID);
-
-const Key blobGranuleMergeKeyFor(UID const& mergeGranuleID);
-UID decodeBlobGranuleMergeKey(KeyRef const& key);
-
-// these are versionstamped
-const Value blobGranuleSplitValueFor(BlobGranuleSplitState st);
-std::pair<BlobGranuleSplitState, Version> decodeBlobGranuleSplitValue(ValueRef const& value);
-
-const Value blobGranuleMergeValueFor(KeyRange mergeKeyRange,
-                                     std::vector<UID> parentGranuleIDs,
-                                     std::vector<Key> parentGranuleRanges,
-                                     std::vector<Version> parentGranuleStartVersions);
-// FIXME: probably just define object type for this?
-std::tuple<KeyRange, Version, std::vector<UID>, std::vector<Key>, std::vector<Version>> decodeBlobGranuleMergeValue(
-    ValueRef const& value);
-
-// BlobGranuleMergeBoundary.
-const Key blobGranuleMergeBoundaryKeyFor(const KeyRef& key);
-const Value blobGranuleMergeBoundaryValueFor(BlobGranuleMergeBoundary const& boundary);
-Standalone<BlobGranuleMergeBoundary> decodeBlobGranuleMergeBoundaryValue(const ValueRef& value);
-
-const Key blobGranuleHistoryKeyFor(KeyRangeRef const& range, Version version);
-std::pair<KeyRange, Version> decodeBlobGranuleHistoryKey(KeyRef const& key);
-const KeyRange blobGranuleHistoryKeyRangeFor(KeyRangeRef const& range);
-
-const Value blobGranuleHistoryValueFor(Standalone<BlobGranuleHistoryValue> const& historyValue);
-Standalone<BlobGranuleHistoryValue> decodeBlobGranuleHistoryValue(ValueRef const& value);
-
-// \xff/bwl/[[BlobWorkerID]] = [[BlobWorkerInterface]]
-extern const KeyRangeRef blobWorkerListKeys;
-
-const Key blobWorkerListKeyFor(UID workerID);
-UID decodeBlobWorkerListKey(KeyRef const& key);
-const Value blobWorkerListValue(BlobWorkerInterface const& interface);
-BlobWorkerInterface decodeBlobWorkerListValue(ValueRef const& value);
-
-// \xff/bwa/[[BlobWorkerID]] = [[UID]]
-extern const KeyRangeRef blobWorkerAffinityKeys;
-
-const Key blobWorkerAffinityKeyFor(UID workerID);
-UID decodeBlobWorkerAffinityKey(KeyRef const& key);
-const Value blobWorkerAffinityValue(UID const& id);
-UID decodeBlobWorkerAffinityValue(ValueRef const& value);
-
-extern const Key blobManifestVersionKey;
 
 extern const KeyRangeRef idempotencyIdKeys;
 extern const KeyRef idempotencyIdsExpiredVersion;

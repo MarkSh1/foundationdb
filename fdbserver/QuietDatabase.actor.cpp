@@ -233,65 +233,6 @@ ACTOR Future<std::pair<int64_t, int64_t>> getTLogQueueInfo(Database cx,
 	return std::make_pair(maxQueueSize, maxPoppedVersionLag);
 }
 
-// Returns a vector of blob worker interfaces which have been persisted under the system key space
-ACTOR Future<std::vector<BlobWorkerInterface>> getBlobWorkers(Database cx,
-                                                              bool use_system_priority = false,
-                                                              Version* grv = nullptr) {
-	state Transaction tr(cx);
-	loop {
-		if (use_system_priority) {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		}
-		tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeResult blobWorkersList = wait(tr.getRange(blobWorkerListKeys, CLIENT_KNOBS->TOO_MANY));
-			ASSERT(!blobWorkersList.more && blobWorkersList.size() < CLIENT_KNOBS->TOO_MANY);
-
-			std::vector<BlobWorkerInterface> blobWorkers;
-			blobWorkers.reserve(blobWorkersList.size());
-			for (int i = 0; i < blobWorkersList.size(); i++) {
-				blobWorkers.push_back(decodeBlobWorkerListValue(blobWorkersList[i].value));
-			}
-			if (grv) {
-				*grv = tr.getReadVersion().get();
-			}
-			return blobWorkers;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
-ACTOR Future<std::vector<std::pair<UID, UID>>> getBlobWorkerAffinity(Database cx,
-                                                                     bool use_system_priority = false,
-                                                                     Version* grv = nullptr) {
-	state Transaction tr(cx);
-	loop {
-		if (use_system_priority) {
-			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
-		}
-		tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
-		tr.setOption(FDBTransactionOptions::LOCK_AWARE);
-		try {
-			RangeResult blobWorkerAffinity = wait(tr.getRange(blobWorkerAffinityKeys, CLIENT_KNOBS->TOO_MANY));
-
-			std::vector<std::pair<UID, UID>> affinities;
-			affinities.reserve(blobWorkerAffinity.size());
-			for (int i = 0; i < blobWorkerAffinity.size(); i++) {
-				affinities.push_back(std::make_pair(decodeBlobWorkerAffinityKey(blobWorkerAffinity[i].key),
-				                                    decodeBlobWorkerAffinityValue(blobWorkerAffinity[i].value)));
-			}
-			if (grv) {
-				*grv = tr.getReadVersion().get();
-			}
-			return affinities;
-		} catch (Error& e) {
-			wait(tr.onError(e));
-		}
-	}
-}
-
 ACTOR Future<std::vector<StorageServerInterface>> getStorageServers(Database cx, bool use_system_priority = false) {
 	state Transaction tr(cx);
 	loop {
@@ -1015,8 +956,6 @@ ACTOR Future<Void> disableConsistencyScanInSim(Database db, bool waitForCompleti
 	return Void();
 }
 
-ACTOR Future<Void> disableBackupWorker(Database cx);
-
 // Waits until a database quiets down (no data in flight, small tlog queue, low SQ, no active data distribution). This
 // requires the database to be available and healthy in order to succeed.
 ACTOR Future<Void> waitForQuietDatabase(Database cx,
@@ -1027,8 +966,10 @@ ACTOR Future<Void> waitForQuietDatabase(Database cx,
                                         int64_t maxStorageServerQueueGate = 5e6,
                                         int64_t maxDataDistributionQueueSize = 0,
                                         int64_t maxPoppedVersionLag = 30e6,
-                                        int64_t maxVersionOffset = 1e6) {
-	state QuietDatabaseChecker checker(isGeneralBuggifyEnabled() ? 4000.0 : 1000.0);
+                                        int64_t maxVersionOffset = 1e6,
+                                        double maxDDRunTime = 0) {
+	// Use provided maxDDRunTime, or fallback to default (1500s or 4000s with buggify)
+	state QuietDatabaseChecker checker(maxDDRunTime > 0 ? maxDDRunTime : (isGeneralBuggifyEnabled() ? 4000.0 : 1500.0));
 	state Future<Void> reconfig =
 	    reconfigureAfter(cx, 100 + (deterministicRandom()->random01() * 100), dbInfo, "QuietDatabase");
 	state Future<int64_t> dataInFlight;
@@ -1185,7 +1126,8 @@ Future<Void> quietDatabase(Database const& cx,
                            int64_t maxStorageServerQueueGate,
                            int64_t maxDataDistributionQueueSize,
                            int64_t maxPoppedVersionLag,
-                           int64_t maxVersionOffset) {
+                           int64_t maxVersionOffset,
+                           double maxDDRunTime) {
 	return waitForQuietDatabase(cx,
 	                            dbInfo,
 	                            phase,
@@ -1194,5 +1136,6 @@ Future<Void> quietDatabase(Database const& cx,
 	                            maxStorageServerQueueGate,
 	                            maxDataDistributionQueueSize,
 	                            maxPoppedVersionLag,
-	                            maxVersionOffset);
+	                            maxVersionOffset,
+	                            maxDDRunTime);
 }

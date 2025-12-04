@@ -170,8 +170,6 @@ void printStatus(StatusObjectReader statusObj,
 // All below actors return true if the command is executed successfully
 // advanceversion command
 ACTOR Future<bool> advanceVersionCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
-// cache_range command
-ACTOR Future<bool> cacheRangeCommandActor(Reference<IDatabase> db, std::vector<StringRef> tokens);
 // configure command
 ACTOR Future<bool> configureCommandActor(Reference<IDatabase> db,
                                          Database localDb,
@@ -228,20 +226,6 @@ ACTOR Future<bool> unlockDatabaseActor(Reference<IDatabase> db, UID uid);
 // metacluster command
 Future<bool> metaclusterCommand(Reference<IDatabase> db, std::vector<StringRef> tokens);
 
-// changefeed command
-ACTOR Future<bool> changeFeedCommandActor(Database localDb,
-                                          Optional<TenantMapEntry> tenantEntry,
-                                          std::vector<StringRef> tokens,
-                                          Future<Void> warn);
-// blobrange command
-ACTOR Future<bool> blobRangeCommandActor(Database localDb,
-                                         Optional<TenantMapEntry> tenantEntry,
-                                         std::vector<StringRef> tokens);
-
-// blobkey command
-ACTOR Future<bool> blobKeyCommandActor(Database localDb,
-                                       Optional<TenantMapEntry> tenantEntry,
-                                       std::vector<StringRef> tokens);
 // blobrestore command
 ACTOR Future<bool> blobRestoreCommandActor(Database localDb, std::vector<StringRef> tokens);
 // hotrange command
