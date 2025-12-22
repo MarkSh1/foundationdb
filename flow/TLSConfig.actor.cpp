@@ -885,7 +885,9 @@ void TLSConfig::setPassword(const std::string& password) {
 		tlsPassword = password;
 		return;
 	}
+
 	std::string decoded;
+
 	if (decodePassword(password, decoded)) {
 		tlsPassword = std::move(decoded);
 	} else {

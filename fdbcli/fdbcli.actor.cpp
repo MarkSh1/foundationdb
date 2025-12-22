@@ -104,7 +104,8 @@ enum {
 	OPT_DEBUG_TLS,
 	OPT_API_VERSION,
 	OPT_MEMORY,
-	OPT_USE_FUTURE_PROTOCOL_VERSION
+	OPT_USE_FUTURE_PROTOCOL_VERSION,
+    OPT_ENCRYPT
 };
 
 CSimpleOpt::SOption g_rgOptions[] = { { OPT_CONNFILE, "-C", SO_REQ_SEP },
@@ -130,6 +131,7 @@ CSimpleOpt::SOption g_rgOptions[] = { { OPT_CONNFILE, "-C", SO_REQ_SEP },
 	                                  { OPT_API_VERSION, "--api-version", SO_REQ_SEP },
 	                                  { OPT_MEMORY, "--memory", SO_REQ_SEP },
 	                                  { OPT_USE_FUTURE_PROTOCOL_VERSION, "--use-future-protocol-version", SO_NONE },
+                                      { OPT_ENCRYPT, "--encrypt", SO_REQ_SEP },
 	                                  TLS_OPTION_FLAGS,
 	                                  SO_END_OF_OPTIONS };
 
@@ -503,6 +505,11 @@ static void printProgramUsage(const char* name) {
 	       "  --use-future-protocol-version\n"
 	       "                 Use the simulated future protocol version to connect to the cluster.\n"
 	       "                 This option can be used testing purposes only!\n"
+	       "  --encrypt PASSWORD\n"
+	       "                 Encrypts the specified password and prints the encrypted password\n"
+	       "                 with the `encrypted:' prefix. The encrypted password can be used\n"
+	       "                 with --tls-password option. This option causes fdbcli to encrypt\n"
+	       "                 the password and exit.\n"
 	       "  -v, --version  Print FoundationDB CLI version information and exit.\n"
 	       "  -h, --help     Display this help and exit.\n");
 }
@@ -900,6 +907,47 @@ void LogCommand(std::string line, UID randomID, std::string errMsg) {
 	TraceEvent(SevInfo, "CLICommandLog", randomID).detail("Command", line).detail("Error", errMsg);
 }
 
+static bool encodePassword(const std::string& plainPassword, std::string& encoded) {
+	const char* libName = "/usr/lib/libnscipher-crypto.so";
+	void* cryptoLib = loadLibrary(libName);
+	if (cryptoLib == nullptr) {
+		fprintf(stderr, "ERROR: Failed to load library '%s'\n", libName);
+		return false;
+	}
+
+	std::unique_ptr<void, decltype(&closeLibrary)> libGuard(cryptoLib, closeLibrary);
+
+	using EncryptType = int (*)(const char*, char*, int*, int);
+	auto encrypt = reinterpret_cast<EncryptType>(loadFunction(cryptoLib, "crypt"));
+
+	if (encrypt == nullptr) {
+		fprintf(stderr, "ERROR: Failed to load 'encrypt' function from '%s'\n", libName);
+		return false;
+	}
+
+	int encryptedLen = 0;
+	const int version = 3; // version parameter
+
+	if (int rc = encrypt(plainPassword.c_str(), nullptr, &encryptedLen, version); rc != 0) {
+		fprintf(stderr, "ERROR: Failed to get encrypted password size (rc=%d)\n", rc);
+		return false;
+	}
+
+	if (encryptedLen <= 0 || encryptedLen > 1024) {
+		fprintf(stderr, "ERROR: Invalid encrypted password size: %d\n", encryptedLen);
+		return false;
+	}
+
+	encoded.resize(encryptedLen);
+	if (int rc = encrypt(plainPassword.c_str(), encoded.data(), &encryptedLen, version); rc != 0) {
+		fprintf(stderr, "ERROR: Failed to encrypt password (rc=%d)\n", rc);
+		return false;
+	}
+
+	encoded = "encrypted:" + encoded;
+	return true;
+}
+
 struct CLIOptions {
 	std::string program_name;
 	int exit_code = -1;
@@ -923,6 +971,7 @@ struct CLIOptions {
 	std::string tlsCAPath;
 	std::string tlsPassword;
 	uint64_t memLimit = 8uLL << 30;
+    Optional<std::string> encrypt;
 
 	std::vector<std::pair<std::string, std::string>> knobs;
 
@@ -1062,6 +1111,9 @@ struct CLIOptions {
 			knobs.emplace_back(knobName.get(), args.OptionArg());
 			break;
 		}
+		case OPT_ENCRYPT:
+			encrypt = args.OptionArg();
+			break;
 		case OPT_DEBUG_TLS:
 			debugTLS = true;
 			break;
@@ -2384,6 +2436,16 @@ int main(int argc, char** argv) {
 	CLIOptions opt(argc, argv);
 	if (opt.exit_code != -1)
 		return opt.exit_code;
+
+	if (opt.encrypt.present()) {
+		std::string encrypted;
+		if (!encodePassword(opt.encrypt.get(), encrypted)) {
+			fprintf(stderr, "ERROR: Failed to encrypt password\n");
+			return 1;
+		}
+		printf("%s\n", encrypted.c_str());
+		return 0;
+	}
 
 	if (opt.trace) {
 		if (opt.traceDir.empty())
