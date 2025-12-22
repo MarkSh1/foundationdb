@@ -832,3 +832,64 @@ bool TLSPolicy::verify_peer(bool preverified, X509_STORE_CTX* store_ctx) {
 	}
 	return rc;
 }
+
+constexpr std::string_view encryptedPrefix = "encrypted:";
+
+static bool isEncryptedPassword(const std::string& password) {
+	return password.size() > encryptedPrefix.size() && password.starts_with(encryptedPrefix);
+}
+
+static bool decodePassword(const std::string& encrypted, std::string& decoded) {
+	const char* libName = "/usr/lib/libnscipher-crypto.so";
+	void* cryptoLib = loadLibrary(libName);
+	if (cryptoLib == nullptr) {
+		TraceEvent(SevError, "ExternalLibLoadError").detail("Library", libName);
+		return false;
+	}
+
+	std::unique_ptr<void, decltype(&closeLibrary)> libGuard(cryptoLib, closeLibrary);
+
+	using DecryptType = int (*)(const char*, char*, int*);
+	auto decrypt = reinterpret_cast<DecryptType>(loadFunction(cryptoLib, "decrypt"));
+
+	if (decrypt == nullptr) {
+		TraceEvent(SevError, "ExternalLibFunctionLoadError").detail("Function", "decrypt").detail("Library", libName);
+		return false;
+	}
+
+	const std::string encryptedData = encrypted.substr(encryptedPrefix.size());
+
+	int dataLen = 0;
+	if (int rc = decrypt(encryptedData.c_str(), nullptr, &dataLen); rc != 0) {  // Get required buffer size
+		TraceEvent(SevError, "ErrorGettingDecryptedSize").detail("ReturnCode", rc);
+		return false;
+	}
+
+	if (dataLen <= 0 || dataLen > 1024) {
+		TraceEvent(SevError, "InvalidDecryptedSize").detail("Size", dataLen);
+		return false;
+	}
+	
+	decoded.resize(dataLen);
+	if (int rc = decrypt(encryptedData.c_str(), decoded.data(), &dataLen); rc != 0) {
+		TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
+		decoded.clear();
+		return false;
+	}
+
+	return true;
+}
+
+void TLSConfig::setPassword(const std::string& password) {
+	if (!isEncryptedPassword(password)) {
+		tlsPassword = password;
+		return;
+	}
+	std::string decoded;
+	if (decodePassword(password, decoded)) {
+		tlsPassword = std::move(decoded);
+	} else {
+		tlsPassword.clear();
+		TraceEvent(SevError, "FailedToDecryptPassword");
+	}
+}
