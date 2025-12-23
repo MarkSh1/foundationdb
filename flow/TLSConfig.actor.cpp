@@ -852,9 +852,7 @@ struct CryptoLibHandle {
 			lib = nullptr;
 		}
 	}
-	explicit operator bool() const { 
-		return func != nullptr; 
-	}
+	explicit operator bool() const { return func != nullptr; }
 	~CryptoLibHandle() {
 		if (lib)
 			closeLibrary(lib);
@@ -864,50 +862,54 @@ struct CryptoLibHandle {
 constexpr std::string_view encryptedPrefix = "encrypted:";
 const int bufLen = 1024; // Assume max size of encrypted and decrypted password is 1024
 
-bool TLSConfig::encodePassword(const std::string& plainPassword, std::string& encoded) {
-	CryptoLibHandle cryptoHandle("crypt");
+static bool processWithCrypto(const char* funcName, const std::string& input, std::string& output) {
+	CryptoLibHandle cryptoHandle(funcName);
 
 	if (!cryptoHandle) {
-		fprintf(stderr, "ERROR: Failed to load 'crypt' function from external lib\n");
+		fprintf(stderr, "ERROR: Failed to load '%s' function\n", funcName);
 		return false;
 	}
-	auto encrypt = reinterpret_cast<int (*)(const char*, char*, int*, int)>(cryptoHandle.func);
 
-	int encryptedLen = bufLen;
-	const int version = 3; // version parameter
+	int outputLen = bufLen;
+	output.resize(outputLen);
+	int rc = 0;
 
-	encoded.resize(encryptedLen);
+	if (funcName == std::string("crypt")) {
+		auto encrypt = reinterpret_cast<int (*)(const char*, char*, int*, int)>(cryptoHandle.func);
+		const int version = 3; // version parameter
+		rc = encrypt(input.c_str(), output.data(), &outputLen, version);
+		if (rc) {
+			fprintf(stderr, "ERROR: Failed to encrypt password (rc=%d)\n", rc);
+		}
+	};
 
-	if (int rc = encrypt(plainPassword.c_str(), encoded.data(), &encryptedLen, version); rc != 0) {
-		fprintf(stderr, "ERROR: Failed to crypt password (rc=%d)\n", rc);
+	if (funcName == std::string("decrypt")) {
+		auto decrypt = reinterpret_cast<int (*)(const char*, char*, int*)>(cryptoHandle.func);
+		rc = decrypt(input.c_str(), output.data(), &outputLen);
+		if (rc) {
+			TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
+		}
+	}
+
+	if (rc) {
+		output.clear();
 		return false;
 	}
-	encoded.resize(encryptedLen);
-	encoded.insert(0, encryptedPrefix);
+
+	output.resize(outputLen);
 	return true;
 }
 
+bool TLSConfig::encodePassword(const std::string& plainPassword, std::string& encoded) {
+	if (processWithCrypto("crypt", plainPassword, encoded)) {
+		encoded.insert(0, encryptedPrefix);
+		return true;
+	}
+	return false;
+}
+
 static bool decodePassword(const std::string& encrypted, std::string& decoded) {
-	CryptoLibHandle cryptoHandle("decrypt");
-
-	if (!cryptoHandle) {
-		return false;
-	}
-
-	auto decrypt = reinterpret_cast<int (*)(const char*, char*, int*)>(cryptoHandle.func);
-
-	int decryptedLen = bufLen;
-
-	decoded.resize(decryptedLen);
-	if (int rc = decrypt(encrypted.c_str(), decoded.data(), &decryptedLen); rc != 0) {
-		TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
-		decoded.clear();
-		return false;
-	}
-
-	decoded.resize(decryptedLen);
-
-	return true;
+	return processWithCrypto("decrypt", encrypted, decoded);
 }
 
 void TLSConfig::setPassword(const std::string& password) {
