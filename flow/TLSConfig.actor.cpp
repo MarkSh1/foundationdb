@@ -836,14 +836,14 @@ struct CryptoLibHandle {
 	void* lib = nullptr;
 	void* func = nullptr;
 
-	CryptoLibHandle(const char* funcName) {
+	CryptoLibHandle(std::string_view funcName) {
 		const char* libName = "libnscipher-crypto.so";
 		lib = loadLibrary(libName);
 		if (!lib) {
 			TraceEvent(SevError, "ExternalLibLoadError").detail("Library", libName);
 			return;
 		}
-		func = loadFunction(lib, funcName);
+		func = loadFunction(lib, funcName.data());
 		if (!func) {
 			TraceEvent(SevError, "ExternalLibFunctionLoadError")
 			    .detail("Function", funcName)
@@ -862,11 +862,11 @@ struct CryptoLibHandle {
 constexpr std::string_view encryptedPrefix = "encrypted:";
 const int bufLen = 1024; // Assume max size of encrypted and decrypted password is 1024
 
-static bool processWithCrypto(const char* funcName, const std::string& input, std::string& output) {
+static bool processWithCrypto(std::string_view funcName, const std::string& input, std::string& output) {
 	CryptoLibHandle cryptoHandle(funcName);
 
 	if (!cryptoHandle) {
-		fprintf(stderr, "ERROR: Failed to load '%s' function\n", funcName);
+		fprintf(stderr, "ERROR: Failed to load '%s' function\n", funcName.data());
 		return false;
 	}
 
@@ -874,24 +874,20 @@ static bool processWithCrypto(const char* funcName, const std::string& input, st
 	output.resize(outputLen);
 	int rc = 0;
 
-	if (funcName == std::string("crypt")) {
+	if (funcName == "crypt") {
 		auto encrypt = reinterpret_cast<int (*)(const char*, char*, int*, int)>(cryptoHandle.func);
 		const int version = 3; // version parameter
 		rc = encrypt(input.c_str(), output.data(), &outputLen, version);
-		if (rc) {
-			fprintf(stderr, "ERROR: Failed to encrypt password (rc=%d)\n", rc);
-		}
 	};
 
-	if (funcName == std::string("decrypt")) {
+	if (funcName == "decrypt") {
 		auto decrypt = reinterpret_cast<int (*)(const char*, char*, int*)>(cryptoHandle.func);
 		rc = decrypt(input.c_str(), output.data(), &outputLen);
-		if (rc) {
-			TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
-		}
 	}
 
 	if (rc) {
+		fprintf(stderr, "ERROR: Failed to exec function (rc=%d)\n", rc);
+		TraceEvent(SevError, "ErrorExecFunction").detail("ReturnCode", rc);
 		output.clear();
 		return false;
 	}
@@ -905,6 +901,7 @@ bool TLSConfig::encodePassword(const std::string& plainPassword, std::string& en
 		encoded.insert(0, encryptedPrefix);
 		return true;
 	}
+	
 	return false;
 }
 
