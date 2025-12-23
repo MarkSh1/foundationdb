@@ -832,82 +832,48 @@ bool TLSPolicy::verify_peer(bool preverified, X509_STORE_CTX* store_ctx) {
 	}
 	return rc;
 }
+struct CryptoLibHandle {
+	void* lib = nullptr;
+	void* func = nullptr;
 
-static std::unique_ptr<void, decltype(&closeLibrary)> loadCryptoLib() {
-	const char* libName = "libnscipher-crypto.so";
-	void* lib = loadLibrary(libName);
-	if (!lib) {
-		TraceEvent(SevError, "ExternalLibLoadError").detail("Library", libName);
-	}
-	return { lib, closeLibrary };
-}
-
-static bool decodePassword(const std::string& encrypted, std::string& decoded) {
-	auto cryptoLib = loadCryptoLib();
-	if (!cryptoLib) {
-		return false;
-	}
-
-	using DecryptType = int (*)(const char*, char*, int*);
-	auto decrypt = reinterpret_cast<DecryptType>(loadFunction(cryptoLib.get(), "decrypt"));
-
-	if (!decrypt) {
-		TraceEvent(SevError, "ExternalDecryptFunctionLoadError");
-		return false;
-	}
-
-	int dataLen = 1024; // Assume max size of decrypted password is 1024
-
-	decoded.resize(dataLen);
-	if (int rc = decrypt(encrypted.c_str(), decoded.data(), &dataLen); rc != 0) {
-		TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
-		decoded.clear();
-		return false;
-	}
-
-	decoded.resize(dataLen);
-
-	return true;
-}
-
-constexpr std::string_view encryptedPrefix = "encrypted:";
-
-void TLSConfig::setPassword(const std::string& password) {
-
-	auto isEncryptedPassword = [](const std::string& password) -> bool {
-		return password.size() > encryptedPrefix.size() && password.starts_with(encryptedPrefix);
-	};
-
-	if (!isEncryptedPassword(password)) {
-		tlsPassword = password;
-	} else {
-
-		std::string decoded;
-
-		if (decodePassword(password.substr(encryptedPrefix.size()), decoded)) {
-			tlsPassword = std::move(decoded);
-		} else {
-			tlsPassword.clear();
-			TraceEvent(SevError, "FailedToDecryptPassword");
+	CryptoLibHandle(const char* funcName) {
+		const char* libName = "libnscipher-crypto.so";
+		lib = loadLibrary(libName);
+		if (!lib) {
+			TraceEvent(SevError, "ExternalLibLoadError").detail("Library", libName);
+			return;
+		}
+		func = loadFunction(lib, funcName);
+		if (!func) {
+			TraceEvent(SevError, "ExternalLibFunctionLoadError")
+			    .detail("Function", funcName)
+			    .detail("Library", libName);
+			closeLibrary(lib);
+			lib = nullptr;
 		}
 	}
-}
+	explicit operator bool() const { 
+		return func != nullptr; 
+	}
+	~CryptoLibHandle() {
+		if (lib)
+			closeLibrary(lib);
+	}
+};
+
+constexpr std::string_view encryptedPrefix = "encrypted:";
+const int bufLen = 1024; // Assume max size of encrypted and decrypted password is 1024
 
 bool TLSConfig::encodePassword(const std::string& plainPassword, std::string& encoded) {
-	auto cryptoLib = loadCryptoLib();
-	if (!cryptoLib) {
-		return false;
-	}
+	CryptoLibHandle cryptoHandle("crypt");
 
-	using EncryptType = int (*)(const char*, char*, int*, int);
-	auto encrypt = reinterpret_cast<EncryptType>(loadFunction(cryptoLib.get(), "crypt"));
-
-	if (encrypt == nullptr) {
+	if (!cryptoHandle) {
 		fprintf(stderr, "ERROR: Failed to load 'crypt' function from external lib\n");
 		return false;
 	}
+	auto encrypt = reinterpret_cast<int (*)(const char*, char*, int*, int)>(cryptoHandle.func);
 
-	int encryptedLen = 1024; // Assume max size of encrypted password is 1024
+	int encryptedLen = bufLen;
 	const int version = 3; // version parameter
 
 	encoded.resize(encryptedLen);
@@ -917,7 +883,44 @@ bool TLSConfig::encodePassword(const std::string& plainPassword, std::string& en
 		return false;
 	}
 	encoded.resize(encryptedLen);
-
 	encoded.insert(0, encryptedPrefix);
 	return true;
+}
+
+static bool decodePassword(const std::string& encrypted, std::string& decoded) {
+	CryptoLibHandle cryptoHandle("decrypt");
+
+	if (!cryptoHandle) {
+		return false;
+	}
+
+	auto decrypt = reinterpret_cast<int (*)(const char*, char*, int*)>(cryptoHandle.func);
+
+	int decryptedLen = bufLen;
+
+	decoded.resize(decryptedLen);
+	if (int rc = decrypt(encrypted.c_str(), decoded.data(), &decryptedLen); rc != 0) {
+		TraceEvent(SevError, "ErrorDecryptingTLSPassword").detail("ReturnCode", rc);
+		decoded.clear();
+		return false;
+	}
+
+	decoded.resize(decryptedLen);
+
+	return true;
+}
+
+void TLSConfig::setPassword(const std::string& password) {
+	if (password.size() > encryptedPrefix.size() && password.starts_with(encryptedPrefix)) {
+		std::string decoded;
+
+		if (decodePassword(password.substr(encryptedPrefix.size()), decoded)) {
+			tlsPassword = std::move(decoded);
+		} else {
+			tlsPassword.clear();
+			TraceEvent(SevError, "FailedToDecryptPassword");
+		}
+	} else {
+		tlsPassword = password;
+	}
 }
