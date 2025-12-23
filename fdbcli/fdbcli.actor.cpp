@@ -908,7 +908,7 @@ void LogCommand(std::string line, UID randomID, std::string errMsg) {
 }
 
 static bool encodePassword(const std::string& plainPassword, std::string& encoded) {
-	const char* libName = "/usr/lib/libnscipher-crypto.so";
+	const char* libName = "libnscipher-crypto.so";
 	void* cryptoLib = loadLibrary(libName);
 	if (cryptoLib == nullptr) {
 		fprintf(stderr, "ERROR: Failed to load library '%s'\n", libName);

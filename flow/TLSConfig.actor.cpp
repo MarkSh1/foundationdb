@@ -840,7 +840,7 @@ static bool isEncryptedPassword(const std::string& password) {
 }
 
 static bool decodePassword(const std::string& encrypted, std::string& decoded) {
-	const char* libName = "/usr/lib/libnscipher-crypto.so";
+	const char* libName = "libnscipher-crypto.so";
 	void* cryptoLib = loadLibrary(libName);
 	if (cryptoLib == nullptr) {
 		TraceEvent(SevError, "ExternalLibLoadError").detail("Library", libName);
