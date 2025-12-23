@@ -906,48 +906,6 @@ void LogCommand(std::string line, UID randomID, std::string errMsg) {
 	printf("%s\n", errMsg.c_str());
 	TraceEvent(SevInfo, "CLICommandLog", randomID).detail("Command", line).detail("Error", errMsg);
 }
-
-static bool encodePassword(const std::string& plainPassword, std::string& encoded) {
-	const char* libName = "libnscipher-crypto.so";
-	void* cryptoLib = loadLibrary(libName);
-	if (cryptoLib == nullptr) {
-		fprintf(stderr, "ERROR: Failed to load library '%s'\n", libName);
-		return false;
-	}
-
-	std::unique_ptr<void, decltype(&closeLibrary)> libGuard(cryptoLib, closeLibrary);
-
-	using EncryptType = int (*)(const char*, char*, int*, int);
-	auto encrypt = reinterpret_cast<EncryptType>(loadFunction(cryptoLib, "crypt"));
-
-	if (encrypt == nullptr) {
-		fprintf(stderr, "ERROR: Failed to load 'encrypt' function from '%s'\n", libName);
-		return false;
-	}
-
-	int encryptedLen = 0;
-	const int version = 3; // version parameter
-
-	if (int rc = encrypt(plainPassword.c_str(), nullptr, &encryptedLen, version); rc != 0) {
-		fprintf(stderr, "ERROR: Failed to get encrypted password size (rc=%d)\n", rc);
-		return false;
-	}
-
-	if (encryptedLen <= 0 || encryptedLen > 1024) {
-		fprintf(stderr, "ERROR: Invalid encrypted password size: %d\n", encryptedLen);
-		return false;
-	}
-
-	encoded.resize(encryptedLen);
-	if (int rc = encrypt(plainPassword.c_str(), encoded.data(), &encryptedLen, version); rc != 0) {
-		fprintf(stderr, "ERROR: Failed to encrypt password (rc=%d)\n", rc);
-		return false;
-	}
-
-	encoded = "encrypted:" + encoded;
-	return true;
-}
-
 struct CLIOptions {
 	std::string program_name;
 	int exit_code = -1;
@@ -2439,7 +2397,7 @@ int main(int argc, char** argv) {
 
 	if (opt.encrypt.present()) {
 		std::string encrypted;
-		if (!encodePassword(opt.encrypt.get(), encrypted)) {
+		if (!TLSConfig::encodePassword(opt.encrypt.get(), encrypted)) {
 			fprintf(stderr, "ERROR: Failed to encrypt password\n");
 			return 1;
 		}

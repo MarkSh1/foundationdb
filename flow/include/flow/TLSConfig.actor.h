@@ -175,6 +175,8 @@ public:
 
 	void setPassword(const std::string& password);
 
+	static bool encodePassword(const std::string& plainPassword, std::string& encoded);
+
 	void clearVerifyPeers() { tlsVerifyPeers.clear(); }
 
 	void addVerifyPeers(const std::string& verifyPeers) { tlsVerifyPeers.push_back(verifyPeers); }
