@@ -869,16 +869,16 @@ static bool processWithCrypto(std::string_view funcName, const std::string& inpu
 	}
 
 	int outputLen = bufLen;
-	output.resize(outputLen);
+
+	char buf[bufLen]{};
 
 	auto func = reinterpret_cast<int (*)(const char*, char*, int*)>(cryptoHandle.func);
-	if (int rc = func(input.c_str(), output.data(), &outputLen); rc != 0) {
+	if (int rc = func(input.c_str(), buf, &outputLen); rc != 0) {
 		fprintf(stderr, "ERROR: Failed to exec function (rc=%d)\n", rc);
 		TraceEvent(SevError, "ErrorExecFunction").detail("ReturnCode", rc);
-		output.clear();
 		return false;
 	}
-	output.resize(outputLen);
+	output.assign(buf, outputLen);
 	return true;
 }
 
