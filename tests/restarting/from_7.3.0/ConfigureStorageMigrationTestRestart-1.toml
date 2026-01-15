@@ -1,7 +1,7 @@
 [configuration]
 storageEngineExcludeTypes=[5]
 extraMachineCountDC = 2
-tenantModes = ['disabled']
+encryptModes=['disabled']
 
 [[test]]
 testTitle = 'CloggedConfigureDatabaseTest'
