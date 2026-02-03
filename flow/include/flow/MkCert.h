@@ -158,6 +158,10 @@ CertChainRef makeCertChain(Arena& arena, VectorRef<CertSpecRef> specs, Optional<
 // Note: side does not imply anything different other than the choice of common names
 CertChainRef makeCertChain(Arena& arena, unsigned depth, ESide side);
 
+// Make a single self-signed certificate with password (for testing password-protected keys)
+// Returns a chain of length 1
+CertAndKeyRef makePasswCert(Arena& arena, StringRef password);
+
 } // namespace mkcert
 
 #endif /*MKCERT_H*/

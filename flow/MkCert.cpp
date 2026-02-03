@@ -369,4 +369,12 @@ StringRef CertKind::getCommonName(StringRef prefix, Arena& arena) const {
 	}
 }
 
+CertAndKeyRef makePasswCert(Arena& arena, StringRef password) {
+	auto spec = CertSpecRef::make(arena, CertKind(Server{}));
+	auto cert = makeCertNative(spec, CertAndKeyNative{});
+	auto certPem = cert.toPem(arena);
+	auto keyPem = cert.privateKey.writePemWithPassword(arena, password);
+	return CertAndKeyRef{ certPem.certPem, keyPem };
+}
+
 } // namespace mkcert

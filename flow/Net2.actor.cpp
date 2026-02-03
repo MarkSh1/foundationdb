@@ -1393,6 +1393,8 @@ void Net2::initTLS(ETLSInitState targetState) {
 			sslContextVar.set(ReferencedObject<boost::asio::ssl::context>::from(std::move(newContext)));
 		} catch (Error& e) {
 			TraceEvent("Net2TLSInitError").error(e);
+			flushTraceFileVoid();
+			throw Error(e);
 		}
 		backgroundCertRefresh =
 		    reloadCertificatesOnChange(tlsConfig, onPolicyFailure, &sslContextVar, &activeTlsPolicy);
