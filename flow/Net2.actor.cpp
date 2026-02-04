@@ -1496,7 +1496,7 @@ void Net2::initTLS(ETLSInitState targetState) {
 		} catch (Error& e) {
 			TraceEvent("Net2TLSInitError").error(e);
 			flushTraceFileVoid();
-			throw Error(e);
+			throw;
 		}
 		backgroundCertRefresh =
 		    reloadCertificatesOnChange(tlsConfig, onPolicyFailure, &sslContextVar, &activeTlsPolicy);

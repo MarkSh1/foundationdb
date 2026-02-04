@@ -48,18 +48,18 @@
 using namespace std::literals::string_view_literals;
 
 enum ExitCodes : int {
-    SUCCESS = 0,
-    
+	SUCCESS = 0,
+
 	MAIN_TEST_FAILED = 1,
-    
-    CLIENT_PIPE_READ_ADDR_FAILED = 2,
-    CLIENT_FAILED = 3,
-    CLIENT_TEST_RESULT_MISMATCH = 4,
-    
-    SERVER_BIND_ERROR = 5,
-    SERVER_STDOUT_REDIRECT_FAILED = 6,
-    
-    WAITPID_ANY_STATUS = -1,
+
+	CLIENT_PIPE_READ_ADDR_FAILED = 2,
+	CLIENT_FAILED = 3,
+	CLIENT_TEST_RESULT_MISMATCH = 4,
+
+	SERVER_BIND_ERROR = 5,
+	SERVER_STDOUT_REDIRECT_FAILED = 6,
+
+	WAITPID_ANY_STATUS = -1,
 };
 
 enum Role : uint8_t { MAIN, CLIENT, SERVER, UNDETERMINED, LAST };
@@ -416,7 +416,7 @@ bool waitPid(pid_t subProcPid, const char* procName, int expectStatus = WAITPID_
 		auto [ok, message] = waitPidStatusInterpreter(procName, status);
 		log("{}", message);
 
-		return ok || WEXITSTATUS(status) == expectStatus;
+		return ok || (expectStatus != WAITPID_ANY_STATUS && WEXITSTATUS(status) == expectStatus);
 	}
 }
 
@@ -569,7 +569,7 @@ int main(int argc, char** argv) {
 	constexpr auto singleChainPair = std::pair(ChainLength(1), ChainLength(1));
 	inputs.insert(inputs.end(), 3, singleChainPair);
 
-	for (const auto& testCase : std::array{ "none", "client", "server" }) {
+	for (const auto& testCase : std::array{ "no_bad_password", "client", "server" }) {
 		if (runTlsTest(singleChainPair.first, singleChainPair.second, testCase))
 			failed.push_back(singleChainPair);
 	}
