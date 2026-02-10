@@ -133,12 +133,12 @@ struct TLSCreds {
 	std::string certBytes;
 	std::string keyBytes;
 	std::string caBytes;
-	std::string password = "";
+	std::string password;
 };
 
 TLSCreds makeCreds(ChainLength chainLen, mkcert::ESide side, StringRef password = {}) {
 	if (chainLen == 0 || chainLen == NO_TLS) {
-		return TLSCreds{ chainLen == NO_TLS, "", "", "" };
+		return TLSCreds{ chainLen == NO_TLS, "", "", "", "" };
 	}
 	auto arena = Arena();
 	auto ret = TLSCreds{};
@@ -148,23 +148,23 @@ TLSCreds makeCreds(ChainLength chainLen, mkcert::ESide side, StringRef password 
 		ret.certBytes = certAndKeyPem.certPem.toString();
 		ret.keyBytes = certAndKeyPem.privateKeyPem.toString();
 		ret.caBytes = ret.certBytes;
-		return ret;
-	}
-	auto specs = mkcert::makeCertChainSpec(arena, std::labs(chainLen), side);
-	if (chainLen < 0) {
-		specs[0].offsetNotBefore = -60l * 60 * 24 * 365;
-		specs[0].offsetNotAfter = -10l; // cert that expired 10 seconds ago
-	}
-	auto chain = mkcert::makeCertChain(arena, specs, {} /* create root CA cert from spec*/);
-	if (chain.size() == 1) {
-		ret.certBytes = concatCertChain(arena, chain).toString();
 	} else {
-		auto nonRootChain = chain;
-		nonRootChain.pop_back();
-		ret.certBytes = concatCertChain(arena, nonRootChain).toString();
+		auto specs = mkcert::makeCertChainSpec(arena, std::labs(chainLen), side);
+		if (chainLen < 0) {
+			specs[0].offsetNotBefore = -60l * 60 * 24 * 365;
+			specs[0].offsetNotAfter = -10l; // cert that expired 10 seconds ago
+		}
+		auto chain = mkcert::makeCertChain(arena, specs, {} /* create root CA cert from spec*/);
+		if (chain.size() == 1) {
+			ret.certBytes = concatCertChain(arena, chain).toString();
+		} else {
+			auto nonRootChain = chain;
+			nonRootChain.pop_back();
+			ret.certBytes = concatCertChain(arena, nonRootChain).toString();
+		}
+		ret.caBytes = chain.back().certPem.toString();
+		ret.keyBytes = chain.front().privateKeyPem.toString();
 	}
-	ret.caBytes = chain.back().certPem.toString();
-	ret.keyBytes = chain.front().privateKeyPem.toString();
 	return ret;
 }
 

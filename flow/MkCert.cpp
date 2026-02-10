@@ -261,7 +261,7 @@ CertAndKeyRef CertAndKeyRef::make(Arena& arena, CertSpecRef spec, CertAndKeyRef 
 	auto certPem = newCertAndKey.toPem(arena);
 	if (!password.empty()) {
 		auto keyPem = newCertAndKey.privateKey.writePemWithPassword(arena, password);
-		return CertAndKeyRef{ certPem.certPem, keyPem };
+		certPem = CertAndKeyRef{ certPem.certPem, keyPem };
 	}
 	return certPem;
 }
