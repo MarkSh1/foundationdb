@@ -185,7 +185,6 @@ void decodeServerKeysValue(const ValueRef& value,
                            bool& emptyRange,
                            DataMoveType& dataMoveType,
                            UID& id);
-bool physicalShardMoveEnabled(const UID& dataMoveId);
 
 extern const KeyRangeRef conflictingKeysRange;
 extern const ValueRef conflictingKeysTrue, conflictingKeysFalse;
