@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -123,15 +123,4 @@ void IKnobCollection::setupKnobs(const std::vector<std::pair<std::string, std::s
 			}
 		}
 	}
-}
-
-ConfigMutationRef IKnobCollection::createSetMutation(Arena arena, KeyRef key, ValueRef value) {
-	ConfigKey configKey = ConfigKeyRef::decodeKey(key);
-	auto knobValue =
-	    IKnobCollection::parseKnobValue(configKey.knobName.toString(), value.toString(), IKnobCollection::Type::TEST);
-	return ConfigMutationRef(arena, configKey, knobValue.contents());
-}
-
-ConfigMutationRef IKnobCollection::createClearMutation(Arena arena, KeyRef key) {
-	return ConfigMutationRef(arena, ConfigKeyRef::decodeKey(key), {});
 }

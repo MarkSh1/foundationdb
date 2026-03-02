@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -359,12 +359,14 @@ public:
 	std::vector<std::string> disabledFailureInjectionWorkloads;
 };
 
-ACTOR Future<DistributedTestResults> runWorkload(Database cx, std::vector<TesterInterface> testers, TestSpec spec);
+Future<DistributedTestResults> runWorkload(Database const& cx,
+                                           std::vector<TesterInterface> const& testers,
+                                           TestSpec const& spec);
 
 void logMetrics(std::vector<PerfMetric> metrics);
 
-ACTOR Future<Void> poisson(double* last, double meanInterval);
-ACTOR Future<Void> uniform(double* last, double meanInterval);
+Future<Void> poisson(double* last, double meanInterval);
+Future<Void> uniform(double* last, double meanInterval);
 
 void emplaceIndex(uint8_t* data, int offset, int64_t index);
 Key doubleToTestKey(double p);

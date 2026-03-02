@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ struct Coroutine /*: IThreadlike*/ {
 	Coroutine() = default;
 	~Coroutine() { *alive = false; }
 
-	static constexpr auto kStackSize = 32 * (1 << 10);
+	static constexpr auto kStackSize = 256 * (1 << 10);
 
 	void start() {
 		coro.reset(new coro_t::pull_type(boost::coroutines2::fixedsize_stack(kStackSize),

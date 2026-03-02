@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -320,6 +320,13 @@ func (o NetworkOptions) SetClientBuggifySectionFiredProbability(param int64) err
 	return o.setOpt(83, int64ToBytes(param))
 }
 
+// Sets the IP address to use for tracing. If not provided, the IP address will be automatically determined when connecting to a cluster. This option allows you to specify the IP address explicitly and avoid the automatic determination process.
+//
+// Parameter: IP address in IPv4 or IPv6 format
+func (o NetworkOptions) SetTraceIp(param string) error {
+	return o.setOpt(84, []byte(param))
+}
+
 // Set a tracer to run on the client. Should be set to the same value as the tracer set on the server.
 //
 // Parameter: Distributed tracer type. Choose from none, log_file, or network_lossy
@@ -435,11 +442,6 @@ func (o DatabaseOptions) SetTransactionUsedDuringCommitProtectionDisable() error
 // Enables conflicting key reporting on all transactions, allowing them to retrieve the keys that are conflicting with other transactions.
 func (o DatabaseOptions) SetTransactionReportConflictingKeys() error {
 	return o.setOpt(702, nil)
-}
-
-// Use configuration database.
-func (o DatabaseOptions) SetUseConfigDatabase() error {
-	return o.setOpt(800, nil)
 }
 
 // Enables verification of causal read risky by checking whether clients are able to read stale data when they detect a recovery, and logging an error if so.

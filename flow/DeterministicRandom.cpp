@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -162,6 +162,12 @@ bool DeterministicRandom::truePercent(const int percent) {
 
 uint64_t DeterministicRandom::peek() const {
 	return next;
+}
+
+void DeterministicRandom::resetSeed(uint32_t seed) {
+	rng.seed((unsigned long)seed);
+	next = (uint64_t(rng()) << 32);
+	next ^= rng();
 }
 
 void DeterministicRandom::addref() {

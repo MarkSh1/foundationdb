@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,6 @@
 
 #include "fdbclient/CoordinationInterface.h"
 #include "fdbrpc/WellKnownEndpoints.h"
-#include "fdbserver/ConfigFollowerInterface.h"
-#include "fdbserver/ConfigBroadcastInterface.h"
 
 struct GenerationRegInterface {
 	constexpr static FileIdentifier file_identifier = 16726744;
@@ -220,23 +218,16 @@ struct ForwardRequest {
 	}
 };
 
-class ConfigNode;
-
 class ServerCoordinators : public ClientCoordinators {
 public:
 	ServerCoordinators() {}
-	explicit ServerCoordinators(Reference<IClusterConnectionRecord> ccr,
-	                            ConfigDBType configDBType = ConfigDBType::PAXOS);
+	explicit ServerCoordinators(Reference<IClusterConnectionRecord> ccr);
 
 	std::vector<LeaderElectionRegInterface> leaderElectionServers;
 	std::vector<GenerationRegInterface> stateServers;
-	std::vector<ConfigFollowerInterface> configServers;
 };
 
-Future<Void> coordinationServer(std::string const& dataFolder,
-                                Reference<IClusterConnectionRecord> const& ccf,
-                                Reference<ConfigNode> const&,
-                                ConfigBroadcastInterface const&);
+Future<Void> coordinationServer(std::string const& dataFolder, Reference<IClusterConnectionRecord> const& ccf);
 
 // Read a value of MovableValue and if the old cluster key is nested in it, update it to the new key
 Optional<Value> updateCCSInMovableValue(ValueRef movableVal, KeyRef oldClusterKey, KeyRef newClusterKey);

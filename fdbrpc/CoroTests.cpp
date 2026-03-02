@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -291,7 +291,10 @@ TEST_CASE("/flow/coro/cancel1") {
 	ASSERT(exits);
 	ASSERT(test.getPromiseReferenceCount() == 0 && test.getFutureReferenceCount() == 1 && test.isReady() &&
 	       test.isError() && test.getError().code() == error_code_actor_cancelled);
-	ASSERT(p.getPromiseReferenceCount() == 1 && p.getFutureReferenceCount() == 0);
+	// With unified allocation, coroutine parameter copies persist in the frame until it's destroyed.
+	// The frame stays alive because 'test' still holds a future ref to the CoroActor.
+	// So param 'f' (which refs p's SAV) is still alive. This matches ACTOR behavior.
+	ASSERT(p.getPromiseReferenceCount() == 1 && p.getFutureReferenceCount() == 1);
 
 	return Void();
 }
@@ -496,7 +499,9 @@ TEST_CASE("/flow/coro/chooseTwoActor") {
 	Future<Void> c = chooseTwoActor(a.getFuture(), b.getFuture());
 	ASSERT(a.getFutureReferenceCount() == 2 && b.getFutureReferenceCount() == 2 && !c.isReady());
 	b.send(Void());
-	ASSERT(a.getFutureReferenceCount() == 0 && b.getFutureReferenceCount() == 0 && c.isReady() && !c.isError() &&
+	// With unified allocation, coroutine parameter copies (f, g) persist in the frame until it's destroyed.
+	// The frame stays alive because 'c' holds a future ref. Params f and g each hold one ref.
+	ASSERT(a.getFutureReferenceCount() == 1 && b.getFutureReferenceCount() == 1 && c.isReady() && !c.isError() &&
 	       expectActorCount(1));
 	c = Future<Void>();
 	ASSERT(a.getFutureReferenceCount() == 0 && b.getFutureReferenceCount() == 0 && expectActorCount(0));
@@ -808,10 +813,33 @@ TEST_CASE("#flow/coro/perf/actor patterns") {
 		}
 		printf("quorum(2/3): %0.2f M/sec\n", N / 1e6 / (timer() - start));
 	}
-
 	return Void();
 }
 
+TEST_CASE("noSim/flow/coro/perf/frameSizeBaseline") {
+	// Measure current coroutine frame sizes for performance optimization
+	printf("\n=== Coroutine Frame Size Baseline ===\n");
+	printf("sizeof(coro::CoroPromise<int, true>): %zu bytes\n", sizeof(coro::CoroPromise<int, true>));
+	printf("sizeof(coro::CoroPromise<Void, true>): %zu bytes\n", sizeof(coro::CoroPromise<Void, true>));
+	printf("sizeof(coro::CoroActor<int, true>): %zu bytes\n", sizeof(coro::CoroActor<int, true>));
+	printf("sizeof(coro::AwaitableFuture<coro::CoroPromise<int,true>, int, false>): %zu bytes\n",
+	       sizeof(coro::AwaitableFuture<coro::CoroPromise<int, true>, int, false>));
+	printf("sizeof(coro::AwaitableFuture<coro::CoroPromise<int,true>, int, true>): %zu bytes\n",
+	       sizeof(coro::AwaitableFuture<coro::CoroPromise<int, true>, int, true>));
+
+	printf("\nTARGET: <96 bytes total frame for FastAllocator<96> bucket\n");
+	printf("CURRENT ISSUE: Frame >96B uses FastAllocator<128> (32B wasted per coroutine)\n");
+
+	size_t frameSize = sizeof(coro::CoroPromise<int, true>);
+	if (frameSize >= 96) {
+		printf("❌ Frame size %zu bytes EXCEEDS 96B target - uses FastAllocator<128>\n", frameSize);
+		printf("   Optimization needed: Reduce AwaitableFuture overhead\n");
+	} else {
+		printf("✅ Frame size %zu bytes fits in FastAllocator<96>\n", frameSize);
+	}
+
+	return Void();
+}
 namespace {
 
 template <class YAM>
@@ -1518,18 +1546,14 @@ Future<Void> futureStreamTest() {
 	PromiseStream<double> promise;
 	auto fut = promise.getFuture();
 	Future<Void> f = delaySequence(std::move(promise), &rnds);
-	int i = 0;
-	while (!f.isReady() || fut.isReady()) {
-		try {
-			ASSERT(co_await fut == rnds[i++]);
-		} catch (Error& e) {
-			if (e.code() == error_code_broken_promise) {
-				break;
-			}
-			throw;
-		}
+	// With unified allocation, coroutine parameters (including the PromiseStream moved
+	// into delaySequence) live as long as the SAV — same as ACTOR behavior. The old loop
+	// relied on frame auto-destruction at final_suspend to close the stream, which no
+	// longer happens. Read exactly 100 items instead.
+	for (int i = 0; i < 100; ++i) {
+		ASSERT(co_await fut == rnds[i]);
 	}
-	ASSERT(i == 100);
+	co_await f;
 }
 
 template <class T>

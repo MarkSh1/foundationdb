@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -324,6 +324,7 @@ UID decodeProcessClassKeyOld(KeyRef const& key);
 extern const KeyRangeRef configKeys;
 extern const KeyRef configKeysPrefix;
 
+extern const KeyRef backupWorkerEnabledKey;
 extern const KeyRef perpetualStorageWiggleKey;
 extern const KeyRef perpetualStorageWiggleLocalityKey;
 extern const KeyRef perpetualStorageWiggleIDPrefix;
@@ -485,7 +486,6 @@ extern const KeyRef primaryLocalityKey;
 extern const KeyRef primaryLocalityPrivateKey;
 extern const KeyRef fastLoggingEnabled;
 extern const KeyRef fastLoggingEnabledPrivateKey;
-extern const KeyRef constructDataKey;
 
 extern const KeyRef moveKeysLockOwnerKey, moveKeysLockWriteKey;
 
@@ -625,6 +625,8 @@ extern const KeyRef backupLatestVersionsPrefix;
 // Key range reserved by backup agent to storing mutations
 extern const KeyRangeRef backupLogKeys;
 extern const KeyRangeRef applyLogKeys;
+// Key range reserved for restore validation data storage (system key space)
+extern const KeyRangeRef validateRestoreLogKeys;
 // Returns true if m is a blog (backup log) or alog (apply log) mutation
 bool isBackupLogMutation(const MutationRef& m);
 
@@ -685,12 +687,6 @@ extern const ValueRef writeRecoveryKeyTrue;
 //	Written by master server during recovery if recovering from a snapshot.
 //	Allows incremental restore to read and set starting version for consistency.
 extern const KeyRef snapshotEndVersionKey;
-
-// Configuration database special keys
-extern const KeyRef configTransactionDescriptionKey;
-extern const KeyRange globalConfigKnobKeys;
-extern const KeyRangeRef configKnobKeys;
-extern const KeyRangeRef configClassKeys;
 
 extern const KeyRangeRef idempotencyIdKeys;
 extern const KeyRef idempotencyIdsExpiredVersion;

@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@
 #pragma once
 
 #include "fdbrpc/fdbrpc.h"
-#include "fdbserver/ConfigBroadcaster.h"
 #include "fdbserver/WorkerInterface.actor.h"
 #include "fdbserver/MasterInterface.h"
 #include "fdbclient/ClusterInterface.h"
@@ -52,7 +51,6 @@ Future<StatusReply> clusterGetStatus(
     Version const& datacenterVersionDifference,
     Version const& dcLogServerVersionDifference,
     Version const& dcStorageServerVersionDifference,
-    ConfigBroadcaster const* const& conifgBroadcaster,
     std::unordered_map<NetworkAddress, double /* latest time at which address was excluded */> const&
         excludedDegradedServers);
 
@@ -62,8 +60,6 @@ struct WorkerEvents : std::map<NetworkAddress, TraceEventFields> {};
 ACTOR Future<Optional<std::pair<WorkerEvents, std::set<std::string>>>> latestEventOnWorkers(
     std::vector<WorkerDetails> workers,
     std::string eventName);
-
-ACTOR Future<KMSHealthStatus> getKMSHealthStatus(Reference<const AsyncVar<ServerDBInfo>> db);
 
 #include "flow/unactorcompiler.h"
 #endif

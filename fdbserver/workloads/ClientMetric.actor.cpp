@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ static const auto versionStampIndex = sampleTrInfoKey.toString().find('S');
 static const int versionStampLength = 10;
 
 static const Key CLIENT_LATENCY_INFO_PREFIX = "client_latency/"_sr;
-static const Key CLIENT_LATENCY_INFO_CTR_PREFIX = "client_latency_counter/"_sr;
 
 struct ClientMetricWorkload : TestWorkload {
 	static constexpr auto NAME = "ClientMetric";

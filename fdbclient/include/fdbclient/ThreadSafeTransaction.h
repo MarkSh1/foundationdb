@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@
 #include "flow/ThreadHelper.actor.h"
 #include "fdbclient/ClusterInterface.h"
 #include "fdbclient/IClientApi.h"
-#include "fdbclient/ISingleThreadTransaction.h"
 
 // An implementation of IDatabase that serializes operations onto the network thread and interacts with the lower-level
 // client APIs exposed by NativeAPI and ReadYourWrites.
@@ -67,7 +66,6 @@ public:
 
 private:
 	friend class ThreadSafeTransaction;
-	bool isConfigDB{ false };
 	DatabaseContext* db;
 
 public: // Internal use only
@@ -78,10 +76,10 @@ public: // Internal use only
 };
 
 // An implementation of ITransaction that serializes operations onto the network thread and interacts with the
-// lower-level client APIs exposed by ISingleThreadTransaction
+// lower-level client APIs exposed by ReadYourWritesTransaction.
 class ThreadSafeTransaction : public ITransaction, ThreadSafeReferenceCounted<ThreadSafeTransaction>, NonCopyable {
 public:
-	explicit ThreadSafeTransaction(DatabaseContext* cx, ISingleThreadTransaction::Type type);
+	explicit ThreadSafeTransaction(DatabaseContext* cx);
 	~ThreadSafeTransaction() override;
 
 	// Note: used while refactoring fdbcli, need to be removed later
@@ -169,7 +167,7 @@ public:
 	void debugPrint(std::string const& message) override;
 
 private:
-	ISingleThreadTransaction* tr;
+	ReadYourWritesTransaction* tr;
 	std::shared_ptr<std::atomic_bool> initialized;
 };
 

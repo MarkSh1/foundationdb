@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public:
 	}
 
 	// Given a list of insertions and clears, applies the necessary changes to
-	// the given transaction to update the global configuration database. Keys
+	// the given transaction to update the global configuration keyspace. Keys
 	// in the list of mutations should not include the global configuration
 	// prefix (`\xff\xff/global_config/`). The caller must still commit the
 	// given transaction in order to persist the changes.

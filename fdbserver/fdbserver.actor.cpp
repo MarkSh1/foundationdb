@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,6 +75,9 @@
 #include "fdbserver/OnDemandStore.h"
 #include "fdbserver/MockS3Server.h"
 #include "fdbserver/workloads/workloads.actor.h"
+#ifdef WITH_ROCKSDB
+#include "fdbserver/FDBRocksDBVersion.h"
+#endif
 #include "flow/ArgParseUtil.h"
 #include "flow/DeterministicRandom.h"
 #include "flow/Platform.h"
@@ -133,13 +136,13 @@ using namespace std::literals;
 // clang-format off
 enum {
 	OPT_CONNFILE, OPT_SEEDCONNFILE, OPT_SEEDCONNSTRING, OPT_ROLE, OPT_LISTEN, OPT_PUBLICADDR, OPT_DATAFOLDER, OPT_LOGFOLDER, OPT_PARENTPID, OPT_TRACER, OPT_NEWCONSOLE,
-	OPT_NOBOX, OPT_TESTFILE, OPT_RESTARTING, OPT_RESTORING, OPT_RANDOMSEED, OPT_KEY, OPT_MEMLIMIT, OPT_VMEMLIMIT, OPT_STORAGEMEMLIMIT, OPT_CACHEMEMLIMIT, OPT_MACHINEID,
+	OPT_NOBOX, OPT_TESTFILE, OPT_RESTARTING, OPT_RESTORING, OPT_RANDOMSEED, OPT_RESEED_TIME, OPT_KEY, OPT_MEMLIMIT, OPT_VMEMLIMIT, OPT_STORAGEMEMLIMIT, OPT_CACHEMEMLIMIT, OPT_MACHINEID,
 	OPT_DCID, OPT_MACHINE_CLASS, OPT_BUGGIFY, OPT_VERSION, OPT_BUILD_FLAGS, OPT_CRASHONERROR, OPT_HELP, OPT_NETWORKIMPL, OPT_NOBUFSTDOUT, OPT_BUFSTDOUTERR,
 	OPT_TRACECLOCK, OPT_NUMTESTERS, OPT_DEVHELP, OPT_PRINT_CODE_PROBES, OPT_ROLLSIZE, OPT_MAXLOGS, OPT_MAXLOGSSIZE, OPT_KNOB, OPT_UNITTESTPARAM, OPT_TESTSERVERS, OPT_TEST_ON_SERVERS, OPT_METRICSCONNFILE,
 	OPT_METRICSPREFIX, OPT_LOGGROUP, OPT_LOCALITY, OPT_IO_TRUST_SECONDS, OPT_IO_TRUST_WARN_ONLY, OPT_FILESYSTEM, OPT_PROFILER_RSS_SIZE, OPT_KVFILE,
-	OPT_TRACE_FORMAT, OPT_WHITELIST_BINPATH, OPT_BLOB_CREDENTIALS, OPT_PROXY, OPT_CONFIG_PATH, OPT_USE_TEST_CONFIG_DB, OPT_NO_CONFIG_DB, OPT_FAULT_INJECTION, OPT_PROFILER, OPT_PRINT_SIMTIME,
-	OPT_FLOW_PROCESS_NAME, OPT_FLOW_PROCESS_ENDPOINT, OPT_IP_TRUSTED_MASK, OPT_KMS_CONN_DISCOVERY_URL_FILE, OPT_KMS_CONNECTOR_TYPE, OPT_KMS_REST_ALLOW_NOT_SECURE_CONECTION, OPT_KMS_CONN_VALIDATION_TOKEN_DETAILS,
-	OPT_KMS_CONN_GET_ENCRYPTION_KEYS_ENDPOINT, OPT_KMS_CONN_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT, OPT_KMS_CONN_GET_BLOB_METADATA_ENDPOINT, OPT_NEW_CLUSTER_KEY, OPT_AUTHZ_PUBLIC_KEY_FILE, OPT_USE_FUTURE_PROTOCOL_VERSION, OPT_CONSISTENCY_CHECK_URGENT_MODE,
+	OPT_TRACE_FORMAT, OPT_WHITELIST_BINPATH, OPT_BLOB_CREDENTIALS, OPT_PROXY, OPT_DEPRECATED_CONFIG_PATH, OPT_DEPRECATED_USE_TEST_CONFIG_DB, OPT_DEPRECATED_NO_CONFIG_DB, OPT_FAULT_INJECTION, OPT_PROFILER, OPT_PRINT_SIMTIME,
+	OPT_FLOW_PROCESS_NAME, OPT_FLOW_PROCESS_ENDPOINT, OPT_IP_TRUSTED_MASK, 
+	OPT_NEW_CLUSTER_KEY, OPT_AUTHZ_PUBLIC_KEY_FILE, OPT_USE_FUTURE_PROTOCOL_VERSION, OPT_CONSISTENCY_CHECK_URGENT_MODE,
 	OPT_MOCKS3_PERSISTENCE_DIR
 };
 
@@ -182,6 +185,7 @@ CSimpleOpt::SOption g_rgOptions[] = {
 	{ OPT_RESTARTING,            "--restarting",                SO_NONE },
 	{ OPT_RANDOMSEED,            "-s",                          SO_REQ_SEP },
 	{ OPT_RANDOMSEED,            "--seed",                      SO_REQ_SEP },
+	{ OPT_RESEED_TIME,           "--reseed-time",               SO_REQ_SEP },
 	{ OPT_KEY,                   "-k",                          SO_REQ_SEP },
 	{ OPT_KEY,                   "--key",                       SO_REQ_SEP },
 	{ OPT_MEMLIMIT,              "-m",                          SO_REQ_SEP },
@@ -227,9 +231,9 @@ CSimpleOpt::SOption g_rgOptions[] = {
 	{ OPT_BLOB_CREDENTIALS,      "--blob-credentials",          SO_REQ_SEP },
 	{ OPT_MOCKS3_PERSISTENCE_DIR, "--mocks3-persistence-dir",   SO_REQ_SEP },
 	{ OPT_PROXY,                 "--proxy",                     SO_REQ_SEP },
-	{ OPT_CONFIG_PATH,           "--config-path",               SO_REQ_SEP },
-	{ OPT_USE_TEST_CONFIG_DB,    "--use-test-config-db",        SO_NONE },
-	{ OPT_NO_CONFIG_DB,          "--no-config-db",              SO_NONE },
+	{ OPT_DEPRECATED_CONFIG_PATH, "--config-path",              SO_REQ_SEP },
+	{ OPT_DEPRECATED_USE_TEST_CONFIG_DB, "--use-test-config-db", SO_NONE },
+	{ OPT_DEPRECATED_NO_CONFIG_DB, "--no-config-db",            SO_NONE },
 	{ OPT_FAULT_INJECTION,       "-fi",                         SO_REQ_SEP },
 	{ OPT_FAULT_INJECTION,       "--fault-injection",           SO_REQ_SEP },
 	{ OPT_PROFILER,	             "--profiler-",                 SO_REQ_SEP },
@@ -239,13 +243,6 @@ CSimpleOpt::SOption g_rgOptions[] = {
 	{ OPT_IP_TRUSTED_MASK,       "--trusted-subnet-",           SO_REQ_SEP },
 	{ OPT_NEW_CLUSTER_KEY,       "--new-cluster-key",           SO_REQ_SEP },
 	{ OPT_AUTHZ_PUBLIC_KEY_FILE, "--authorization-public-key-file", SO_REQ_SEP },
-	{ OPT_KMS_CONN_DISCOVERY_URL_FILE,           "--discover-kms-conn-url-file",            SO_REQ_SEP },
-	{ OPT_KMS_CONNECTOR_TYPE,    "--kms-connector-type",                                    SO_REQ_SEP },
-	{ OPT_KMS_REST_ALLOW_NOT_SECURE_CONECTION,  "--kms-rest-allow-not-secure-connection",      SO_NONE },
-	{ OPT_KMS_CONN_VALIDATION_TOKEN_DETAILS,     "--kms-conn-validation-token-details",     SO_REQ_SEP },
-	{ OPT_KMS_CONN_GET_ENCRYPTION_KEYS_ENDPOINT, "--kms-conn-get-encryption-keys-endpoint", SO_REQ_SEP },
-	{ OPT_KMS_CONN_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT, "--kms-conn-get-latest-encryption-keys-endpoint", SO_REQ_SEP },
-	{ OPT_KMS_CONN_GET_BLOB_METADATA_ENDPOINT,   "--kms-conn-get-blob-metadata-endpoint",   SO_REQ_SEP },
 	{ OPT_USE_FUTURE_PROTOCOL_VERSION, 			 "--use-future-protocol-version",			SO_REQ_SEP },
 	{ OPT_CONSISTENCY_CHECK_URGENT_MODE, 		 "--consistency-check-urgent-mode",			SO_NONE },
 	TLS_OPTION_FLAGS,
@@ -587,6 +584,17 @@ static void printVersion() {
 	printf("FoundationDB " FDB_VT_PACKAGE_NAME " (v" FDB_VT_VERSION ")\n");
 	printf("source version %s\n", getSourceVersion());
 	printf("protocol %" PRIx64 "\n", currentProtocolVersion().version());
+#ifdef WITH_ROCKSDB
+	if (FDB_ROCKSDB_GIT_HASH[0] != '\0') {
+		printf("rocksdb %d.%d.%d (commit %s)\n",
+		       FDB_ROCKSDB_MAJOR,
+		       FDB_ROCKSDB_MINOR,
+		       FDB_ROCKSDB_PATCH,
+		       FDB_ROCKSDB_GIT_HASH);
+	} else {
+		printf("rocksdb %d.%d.%d\n", FDB_ROCKSDB_MAJOR, FDB_ROCKSDB_MINOR, FDB_ROCKSDB_PATCH);
+	}
+#endif
 }
 
 static void printHelpTeaser(const char* name) {
@@ -776,6 +784,9 @@ static void printUsage(const char* name, bool devhelp) {
 		                 " The prefix where this process will store its metric data."
 		                 " Must be specified if using a different database for metrics.");
 		printOptionUsage("--knob-KNOBNAME KNOBVALUE", " Changes a database knob. KNOBNAME should be lowercase.");
+		printOptionUsage("--config-path PATH", " Deprecated and ignored.");
+		printOptionUsage("--use-test-config-db", " Deprecated and ignored.");
+		printOptionUsage("--no-config-db", " Deprecated and ignored.");
 		printOptionUsage("--io-trust-seconds SECONDS",
 		                 " Sets the time in seconds that a read or write operation is allowed to take"
 		                 " before timing out with an error. If an operation times out, all future"
@@ -1128,6 +1139,7 @@ struct CLIOptions {
 
 	ServerRole role = ServerRole::FDBD;
 	uint32_t randomSeed = platform::getRandomSeed();
+	double reseedTime = -1.0; // Time in seconds when to reset random seed in simulation (-1 = disabled)
 
 	const char* testFile = "tests/default.txt";
 	std::string kvFile;
@@ -1150,7 +1162,6 @@ struct CLIOptions {
 	bool useNet2 = true;
 	bool useThreadPool = false;
 	std::vector<std::pair<std::string, std::string>> knobs;
-	std::map<std::string, std::string> manualKnobOverrides;
 	LocalityData localities;
 	int minTesterCount = 1;
 	bool testOnServers = false;
@@ -1164,9 +1175,7 @@ struct CLIOptions {
 	Optional<std::string> proxy;
 	const char* blobCredsFromENV = nullptr;
 
-	std::string configPath;
 	std::string mocks3PersistenceDir; // Directory for MockS3 persistence files
-	ConfigDBType configDBType{ ConfigDBType::PAXOS };
 
 	Reference<IClusterConnectionRecord> connectionFile;
 	Standalone<StringRef> machineId;
@@ -1244,12 +1253,16 @@ private:
 				std::string k = knob.substr(0, pos);
 				std::string v = knob.substr(pos + 1, knob.length());
 				knobs.emplace_back(k, v);
-				manualKnobOverrides[k] = v;
 			}
 		}
 	}
 
 	void parseArgsInternal(int argc, char* argv[]) {
+		auto warnDeprecatedOption = [](const char* optionText) {
+			fprintf(stderr, "WARNING: option `%s' is deprecated and ignored\n", optionText);
+			TraceEvent(SevWarnAlways, "DeprecatedCommandLineOption").detail("Option", optionText);
+		};
+
 		for (int a = 0; a < argc; a++) {
 			if (a)
 				commandLine += ' ';
@@ -1314,7 +1327,6 @@ private:
 					flushAndExit(FDB_EXIT_ERROR);
 				}
 				knobs.emplace_back(knobName.get(), args.OptionArg());
-				manualKnobOverrides[knobName.get()] = args.OptionArg();
 				break;
 			}
 			case OPT_PROFILER: {
@@ -1611,6 +1623,16 @@ private:
 				}
 				break;
 			}
+			case OPT_RESEED_TIME: {
+				char* end;
+				reseedTime = strtod(args.OptionArg(), &end);
+				if (*end || reseedTime < 0) {
+					fprintf(stderr, "ERROR: Could not parse reseed time `%s' (must be >= 0)\n", args.OptionArg());
+					printHelpTeaser(argv[0]);
+					flushAndExit(FDB_EXIT_ERROR);
+				}
+				break;
+			}
 			case OPT_MACHINEID: {
 				zoneId = std::string(args.OptionArg());
 				break;
@@ -1747,14 +1769,10 @@ private:
 					flushAndExit(FDB_EXIT_ERROR);
 				}
 				break;
-			case OPT_CONFIG_PATH:
-				configPath = args.OptionArg();
-				break;
-			case OPT_USE_TEST_CONFIG_DB:
-				configDBType = ConfigDBType::SIMPLE;
-				break;
-			case OPT_NO_CONFIG_DB:
-				configDBType = ConfigDBType::DISABLED;
+			case OPT_DEPRECATED_CONFIG_PATH:
+			case OPT_DEPRECATED_USE_TEST_CONFIG_DB:
+			case OPT_DEPRECATED_NO_CONFIG_DB:
+				warnDeprecatedOption(args.OptionText());
 				break;
 			case OPT_FLOW_PROCESS_NAME:
 				flowProcessName = args.OptionArg();
@@ -1817,35 +1835,6 @@ private:
 			case TLSConfig::OPT_TLS_DISABLE_PLAINTEXT_CONNECTION:
 				tlsConfig.setDisablePlainTextConnection(true);
 				break;
-			case OPT_KMS_CONN_DISCOVERY_URL_FILE: {
-				knobs.emplace_back("rest_kms_connector_discover_kms_url_file", args.OptionArg());
-				break;
-			}
-			case OPT_KMS_CONNECTOR_TYPE: {
-				knobs.emplace_back("kms_connector_type", args.OptionArg());
-				break;
-			}
-			case OPT_KMS_REST_ALLOW_NOT_SECURE_CONECTION: {
-				TraceEvent(SevWarnAlways, "RESTKmsConnAllowNotSecureConnection");
-				knobs.emplace_back("rest_kms_allow_not_secure_connection", "true");
-				break;
-			}
-			case OPT_KMS_CONN_VALIDATION_TOKEN_DETAILS: {
-				knobs.emplace_back("rest_kms_connector_validation_token_details", args.OptionArg());
-				break;
-			}
-			case OPT_KMS_CONN_GET_ENCRYPTION_KEYS_ENDPOINT: {
-				knobs.emplace_back("rest_kms_connector_get_encryption_keys_endpoint", args.OptionArg());
-				break;
-			}
-			case OPT_KMS_CONN_GET_LATEST_ENCRYPTION_KEYS_ENDPOINT: {
-				knobs.emplace_back("rest_kms_connector_get_latest_encryption_keys_endpoint", args.OptionArg());
-				break;
-			}
-			case OPT_KMS_CONN_GET_BLOB_METADATA_ENDPOINT: {
-				knobs.emplace_back("rest_kms_connector_get_blob_metadata_endpoint", args.OptionArg());
-				break;
-			}
 			case OPT_NEW_CLUSTER_KEY: {
 				newClusterKey = args.OptionArg();
 				try {
@@ -2117,15 +2106,15 @@ int main(int argc, char* argv[]) {
 		                                         role == ServerRole::Simulation ? IsSimulated::True
 		                                                                        : IsSimulated::False);
 		auto& g_knobs = IKnobCollection::getMutableGlobalKnobCollection();
-		g_knobs.setKnob("log_directory", KnobValue::create(opts.logFolder));
-		g_knobs.setKnob("conn_file", KnobValue::create(opts.connFile));
+		g_knobs.setKnob("log_directory", KnobValueRef::create(opts.logFolder));
+		g_knobs.setKnob("conn_file", KnobValueRef::create(opts.connFile));
 		if (role != ServerRole::Simulation && opts.memLimit > 0) {
 			g_knobs.setKnob("commit_batches_mem_bytes_hard_limit",
-			                KnobValue::create(static_cast<int64_t>(opts.memLimit)));
+			                KnobValueRef::create(static_cast<int64_t>(opts.memLimit)));
 		}
 
 		IKnobCollection::setupKnobs(opts.knobs);
-		g_knobs.setKnob("server_mem_limit", KnobValue::create(static_cast<int64_t>(opts.memLimit)));
+		g_knobs.setKnob("server_mem_limit", KnobValueRef::create(static_cast<int64_t>(opts.memLimit)));
 		// Reinitialize knobs in order to update knobs that are dependent on explicitly set knobs
 		g_knobs.initialize(Randomize::True, role == ServerRole::Simulation ? IsSimulated::True : IsSimulated::False);
 
@@ -2469,17 +2458,21 @@ int main(int argc, char* argv[]) {
 					}
 				}
 				g_knobs.setKnob("encrypt_header_auth_token_enabled",
-				                KnobValue::create(ini.GetBoolValue("META", "encryptHeaderAuthTokenEnabled", false)));
+				                KnobValueRef::create(ini.GetBoolValue("META", "encryptHeaderAuthTokenEnabled", false)));
 				g_knobs.setKnob("encrypt_header_auth_token_algo",
-				                KnobValue::create((int)ini.GetLongValue(
+				                KnobValueRef::create((int)ini.GetLongValue(
 				                    "META", "encryptHeaderAuthTokenAlgo", FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ALGO)));
 
 				g_knobs.setKnob(
 				    "shard_encode_location_metadata",
-				    KnobValue::create(ini.GetBoolValue("META", "enableShardEncodeLocationMetadata", false)));
+				    KnobValueRef::create(ini.GetBoolValue("META", "enableShardEncodeLocationMetadata", false)));
 			}
-			simulationSetupAndRun(
-			    dataFolder, opts.testFile, opts.restarting, (isRestoring >= 1), opts.whitelistBinPaths);
+			simulationSetupAndRun(dataFolder,
+			                      opts.testFile,
+			                      opts.restarting,
+			                      (isRestoring >= 1),
+			                      opts.whitelistBinPaths,
+			                      opts.reseedTime);
 			g_simulator->run();
 		} else if (role == ServerRole::FDBD) {
 			// Update the global blob credential files list so that both fast
@@ -2537,9 +2530,6 @@ int main(int argc, char* argv[]) {
 				                      opts.metricsPrefix,
 				                      opts.rsssize,
 				                      opts.whitelistBinPaths,
-				                      opts.configPath,
-				                      opts.manualKnobOverrides,
-				                      opts.configDBType,
 				                      opts.consistencyCheckUrgentMode));
 				actors.push_back(histogramReport());
 				actors.push_back(metricsReport());

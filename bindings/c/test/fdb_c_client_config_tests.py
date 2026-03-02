@@ -12,10 +12,10 @@ import re
 
 from threading import Thread
 import time
-from fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION, PREV2_RELEASE_VERSION
-from binary_download import FdbBinaryDownloader
-from local_cluster import LocalCluster, PortProvider, TLSConfig
-from test_util import random_alphanum_string
+from fdb_test_runner.fdb_version import CURRENT_VERSION, PREV_RELEASE_VERSION, PREV2_RELEASE_VERSION
+from fdb_test_runner.binary_download import FdbBinaryDownloader
+from fdb_test_runner.local_cluster import LocalCluster, PortProvider, TLSConfig
+from fdb_test_runner.test_util import random_alphanum_string
 
 args = None
 downloader = None
@@ -434,7 +434,7 @@ class ClientConfigTests(unittest.TestCase):
 
     def test_no_external_client_support_api_version_ignore(self):
         # Multiple external clients, API version supported by none of them
-        # Note: Ignored because API function wont be missing in last 2 releases.
+        # Note: Ignored because API function won't be missing in last 2 releases.
         test = ClientConfigTest(self)
         test.create_external_lib_dir([PREV2_RELEASE_VERSION, PREV_RELEASE_VERSION])
         test.disable_local_client = True
@@ -454,7 +454,7 @@ class ClientConfigTests(unittest.TestCase):
 
     def test_one_external_client_wrong_api_version_ignore(self):
         # Multiple external clients, API version unsupported by one of them.
-        # Note: Ignored because API function wont be missing in last 2 releases.
+        # Note: Ignored because API function won't be missing in last 2 releases.
         test = ClientConfigTest(self)
         test.create_external_lib_dir(
             [CURRENT_VERSION, PREV_RELEASE_VERSION, PREV2_RELEASE_VERSION]

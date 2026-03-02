@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2022 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -185,8 +185,6 @@ struct BackupAndRestorePartitionedCorrectnessWorkload : TestWorkload {
 	}
 
 	ACTOR Future<Void> _setup(Database cx, BackupAndRestorePartitionedCorrectnessWorkload* self) {
-		state bool adjusted = false;
-
 		if (BUGGIFY) {
 			for (auto r : getSystemBackupRanges()) {
 				self->backupRanges.push_back_deep(self->backupRanges.arena(), r);
@@ -315,7 +313,6 @@ struct BackupAndRestorePartitionedCorrectnessWorkload : TestWorkload {
 			                               deterministicRandom()->randomInt(0, 2000),
 			                               tag.toString(),
 			                               backupRanges,
-			                               false,
 			                               StopWhenDone{ !stopDifferentialDelay },
 			                               UsePartitionedLog::True, // enable partitioned log here
 			                               IncrementalBackupOnly::False,
@@ -576,8 +573,8 @@ struct BackupAndRestorePartitionedCorrectnessWorkload : TestWorkload {
 				state std::vector<Future<Version>> restores;
 				state std::vector<Standalone<StringRef>> restoreTags;
 				state int restoreIndex = 0;
-				// make sure system keys are not present in the restoreRanges as they will get restored first separately
-				// from the rest
+				// make sure system keys are not present in the restoreRanges as they will get restored first
+				// separately from the rest
 				Standalone<VectorRef<KeyRangeRef>> modifiedRestoreRanges;
 				Standalone<VectorRef<KeyRangeRef>> systemRestoreRanges;
 				for (int i = 0; i < self->restoreRanges.size(); ++i) {
@@ -596,19 +593,17 @@ struct BackupAndRestorePartitionedCorrectnessWorkload : TestWorkload {
 				}
 				self->restoreRanges = modifiedRestoreRanges;
 				if (!systemRestoreRanges.empty()) {
-					// We are able to restore system keys first since we restore an entire cluster at once rather than
-					// partial key ranges.
-					// this is where it fails
 					wait(clearAndRestoreSystemKeys(
 					    cx, self, &backupAgent, targetVersion, lastBackupContainer, systemRestoreRanges));
 				}
-				// and here
 
 				Standalone<StringRef> restoreTag(self->backupTag.toString() + "_" + std::to_string(restoreIndex));
 				restoreTags.push_back(restoreTag);
-				printf("BackupCorrectness, backupAgent.restore is called for restoreIndex:%d tag:%s\n",
+				printf("BackupCorrectness, backupAgent.restore is called for restoreIndex:%d tag:%s "
+				       "TargetVersion:%" PRId64 "\n",
 				       restoreIndex,
-				       restoreTag.toString().c_str());
+				       restoreTag.toString().c_str(),
+				       targetVersion);
 				restores.push_back(backupAgent.restore(cx,
 				                                       cx,
 				                                       restoreTag,

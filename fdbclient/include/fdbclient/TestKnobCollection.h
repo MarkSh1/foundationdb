@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,13 +37,6 @@ public:
 	bool TEST_BOOL;
 	std::string TEST_STRING;
 
-	// Atomic test knobs
-	int64_t TEST_ATOMIC_LONG;
-	int TEST_ATOMIC_INT;
-	double TEST_ATOMIC_DOUBLE;
-	bool TEST_ATOMIC_BOOL;
-	std::string TEST_ATOMIC_STRING;
-
 	bool operator==(TestKnobs const&) const;
 	bool operator!=(TestKnobs const&) const;
 	void initialize();
@@ -68,7 +61,6 @@ public:
 	void clearTestKnobs() override;
 	Optional<KnobValue> tryParseKnobValue(std::string const& knobName, std::string const& knobValue) const override;
 	bool trySetKnob(std::string const& knobName, KnobValueRef const& knobValue) override;
-	bool isAtomic(std::string const& knobName) const override;
 };
 
 #endif // FDBCLIENT_TESTKNOBCOLLECTION_H

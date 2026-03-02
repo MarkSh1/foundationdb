@@ -3,7 +3,7 @@
  *
  * This source file is part of the FoundationDB open source project
  *
- * Copyright 2013-2024 Apple Inc. and the FoundationDB project authors
+ * Copyright 2013-2026 Apple Inc. and the FoundationDB project authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -93,9 +93,6 @@ public:
 
 	// PEM_write_bio_PrivateKey
 	StringRef writePem(Arena& arena, StringRef password = StringRef()) const;
-
-	// PEM_write_bio_PrivateKey with password encryption
-	StringRef writePemWithPassword(Arena& arena, StringRef password) const;
 
 	// d2i_PrivateKey
 	StringRef writeDer(Arena& arena) const;

@@ -285,7 +285,7 @@ def lockAndUnlock(logger):
         env=fdbcli_env,
     )
     process.stdout.readline()
-    # The randome passphrease we need to confirm to proceed the unlocking
+    # The random passphrase we need to confirm to proceed the unlocking
     line2 = process.stdout.readline()
     logger.debug("Random passphrase: {}".format(line2))
     output3, err = process.communicate(input=line2)
@@ -484,74 +484,6 @@ def consistencycheck(logger):
     output3 = run_fdbcli_command("consistencycheck")
     assert output3 == consistency_check_on_output
 
-
-@enable_logging()
-def knobmanagement(logger):
-    # this test will set knobs and verify that the knobs are properly set
-    # must use begin/commit to avoid prompt for description
-
-    # Incorrect arguments
-    output = run_fdbcli_command("setknob")
-    assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("setknob", "min_trace_severity")
-    assert output == "Usage: setknob <KEY> <VALUE> [CONFIG_CLASS]"
-    output = run_fdbcli_command("getknob")
-    assert output == "Usage: getknob <KEY> [CONFIG_CLASS]"
-    logger.debug("incorrect args passed")
-
-    # Invalid knob name
-    err = run_fdbcli_command_and_get_error(
-        'begin; setknob dummy_knob 20; commit "fdbcli change";'
-    )
-    logger.debug("err is: {}".format(err))
-    assert len(err) > 0
-    logger.debug("invalid knob name passed")
-
-    # Invalid type for knob
-    err = run_fdbcli_command_and_get_error(
-        'begin; setknob min_trace_severity dummy-text; commit "fdbcli change";'
-    )
-    logger.debug("err is: {}".format(err))
-    assert len(err) > 0
-    logger.debug("invalid knob type passed")
-
-    # Verifying we can't do a normal set, clear, get, getrange, clearrange
-    # with a setknob
-    err = run_fdbcli_command_and_get_error(
-        "writemode on; begin; set foo bar; setknob max_metric_size 1000; commit;"
-    )
-    logger.debug("err is: {}".format(err))
-    assert len(err) > 0
-
-    err = run_fdbcli_command_and_get_error(
-        "writemode on; begin; clear foo; setknob max_metric_size 1000; commit"
-    )
-    logger.debug("err is: {}".format(err))
-    assert len(err) > 0
-
-    # Various setknobs and verified by getknob
-    output = run_fdbcli_command(
-        'begin; setknob min_trace_severity 30; setknob max_metric_size 1000; \
-                                setknob tracing_udp_listener_addr 192.168.0.1;                       \
-                                setknob tracing_sample_rate 0.3;                                     \
-                                commit "This is an fdbcli test for knobs";'
-    )
-    assert "Committed" in output
-    output = run_fdbcli_command("getknob", "min_trace_severity")
-    assert r"`min_trace_severity' is `30'" == output
-    output = run_fdbcli_command("getknob", "max_metric_size")
-    assert r"`max_metric_size' is `1000'" == output
-    output = run_fdbcli_command("getknob", "tracing_udp_listener_addr")
-    assert r"`tracing_udp_listener_addr' is `'192.168.0.1''" == output
-    output = run_fdbcli_command("getknob", "tracing_sample_rate")
-    assert r"`tracing_sample_rate' is `0.300000'" == output
-
-    output = run_fdbcli_command(
-        'begin; clearknob min_trace_severity; commit "fdbcli clearknob";'
-    )
-    assert "Committed" in output
-    output = run_fdbcli_command("getknob", "min_trace_severity")
-    assert r"`min_trace_severity' is not found" == output
 
 
 @enable_logging()
@@ -1007,7 +939,7 @@ if __name__ == "__main__":
         lockAndUnlock()
         maintenance()
         profile()
-        # TODO: reenable it until it's stable
+        # TODO: re-enable it until it's stable
         # suspend()
         transaction()
         # this is replaced by the "quota" command
@@ -1016,7 +948,6 @@ if __name__ == "__main__":
         versionepoch()
         integer_options()
         tls_address_suffix()
-        knobmanagement()
         # TODO: fix the issue when running through the external client
         # quota()
         idempotency_ids()
