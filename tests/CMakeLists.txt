@@ -38,7 +38,7 @@ if(WITH_PYTHON)
   Or provide a path to another fdbserver")
   endif()
 
-  configure_file(${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_version.py.cmake ${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_test_runner/fdb_version.py)
+  configure_file(${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_version.py.cmake ${PROJECT_BINARY_DIR}/tests/TestRunner/fdb_test_runner/fdb_version.py)
 
   set(TestRunner "${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_test_runner/TestRunner.py")
 

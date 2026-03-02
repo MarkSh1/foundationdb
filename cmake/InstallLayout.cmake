@@ -249,17 +249,17 @@ set(rpm_filename_suffix "${FDB_PACKAGE_VERSION}${package_version_postfix}.${CMAK
 
 set(CPACK_RPM_PACKAGE_GROUP                                ${CURRENT_GIT_VERSION})
 set(CPACK_RPM_PACKAGE_LICENSE                              "Apache 2.0")
-set(CPACK_RPM_PACKAGE_NAME                                 "foundationdb")
-set(CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME                     "${CPACK_RPM_PACKAGE_NAME}-clients")
-set(CPACK_RPM_CLIENTS-EL9_FILE_NAME                        "${CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME}-${FDB_PACKAGE_VERSION}${package_version_postfix}.el9.${CMAKE_SYSTEM_PROCESSOR}.rpm")
-set(CPACK_RPM_CLIENTS-EL9_DEBUGINFO_FILE_NAME              "${CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME}-${FDB_PACKAGE_VERSION}${package_version_postfix}.el9-debuginfo.${CMAKE_SYSTEM_PROCESSOR}.rpm")
+set(CPACK_RPM_PACKAGE_NAME                                 "${package_name}")
+set(CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME                     "${clients_package_name}")
+set(CPACK_RPM_CLIENTS-EL9_FILE_NAME                        "${CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME}-${rpm_filename_suffix}")
+set(CPACK_RPM_CLIENTS-EL9_DEBUGINFO_FILE_NAME              "${CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME}-debuginfo--${rpm_filename_suffix}")
 set(CPACK_RPM_CLIENTS-EL9_PRE_INSTALL_SCRIPT_FILE          ${CMAKE_SOURCE_DIR}/packaging/rpm/scripts/preclients.sh)
 set(CPACK_RPM_CLIENTS-EL9_POST_INSTALL_SCRIPT_FILE         ${CMAKE_SOURCE_DIR}/packaging/rpm/scripts/postclients.sh)
 set(CPACK_RPM_CLIENTS-EL9_USER_FILELIST                    "%dir /etc/foundationdb")
 
-set(CPACK_RPM_SERVER-EL9_PACKAGE_NAME                      "${CPACK_RPM_PACKAGE_NAME}-server")
-set(CPACK_RPM_SERVER-EL9_FILE_NAME                         "${CPACK_RPM_SERVER-EL9_PACKAGE_NAME}-${FDB_PACKAGE_VERSION}${package_version_postfix}.el9.${CMAKE_SYSTEM_PROCESSOR}.rpm")
-set(CPACK_RPM_SERVER-EL9_DEBUGINFO_FILE_NAME               "${CPACK_RPM_SERVER-EL9_PACKAGE_NAME}-${FDB_PACKAGE_VERSION}${package_version_postfix}.el9-debuginfo.${CMAKE_SYSTEM_PROCESSOR}.rpm")
+set(CPACK_RPM_SERVER-EL9_PACKAGE_NAME                      "${server_package_name}")
+set(CPACK_RPM_SERVER-EL9_FILE_NAME                         "${CPACK_RPM_SERVER-EL9_PACKAGE_NAME}-${rpm_filename_suffix}")
+set(CPACK_RPM_SERVER-EL9_DEBUGINFO_FILE_NAME               "${CPACK_RPM_SERVER-EL9_PACKAGE_NAME}-debuginfo-${rpm_filename_suffix}")
 set(CPACK_RPM_SERVER-EL9_PACKAGE_REQUIRES                  "${CPACK_RPM_CLIENTS-EL9_PACKAGE_NAME} = ${FDB_PACKAGE_VERSION}")
 set(CPACK_RPM_SERVER-EL9_PRE_INSTALL_SCRIPT_FILE           ${CMAKE_SOURCE_DIR}/packaging/rpm/scripts/preserver.sh)
 set(CPACK_RPM_SERVER-EL9_POST_INSTALL_SCRIPT_FILE          ${CMAKE_SOURCE_DIR}/packaging/rpm/scripts/postserver.sh)
@@ -268,9 +268,9 @@ set(CPACK_RPM_SERVER-EL9_USER_FILELIST                     "%config(noreplace) /
                                                            "%attr(0700,foundationdb,foundationdb) /var/log/foundationdb"
                                                            "%attr(0700,foundationdb,foundationdb) /var/lib/foundationdb")
 
-set(CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME               "${CPACK_RPM_PACKAGE_NAME}${FDB_PACKAGE_VERSION}${FDB_BUILDTIME_STRING}${PRERELEASE_TAG}-clients")
-set(CPACK_RPM_CLIENTS-VERSIONED_FILE_NAME                  "${CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME}-${CPACK_RPM_PACKAGE_RELEASE}.versioned.${CMAKE_SYSTEM_PROCESSOR}.rpm")
-set(CPACK_RPM_CLIENTS-VERSIONED_DEBUGINFO_FILE_NAME        "${CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME}-${CPACK_RPM_PACKAGE_RELEASE}.versioned-debuginfo.${CMAKE_SYSTEM_PROCESSOR}.rpm")
+set(CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME               "${clients_versioned_package_name}")
+set(CPACK_RPM_CLIENTS-VERSIONED_FILE_NAME                  "${CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME}-${rpm_filename_suffix}")
+set(CPACK_RPM_CLIENTS-VERSIONED_DEBUGINFO_FILE_NAME        "${CPACK_RPM_CLIENTS-VERSIONED_PACKAGE_NAME}-debuginfo-${rpm_filename_suffix}")
 set(CPACK_RPM_CLIENTS-VERSIONED_POST_INSTALL_SCRIPT_FILE   ${CMAKE_BINARY_DIR}/packaging/multiversion/clients/postinst-el9)
 set(CPACK_RPM_CLIENTS-VERSIONED_PRE_UNINSTALL_SCRIPT_FILE  ${CMAKE_BINARY_DIR}/packaging/multiversion/clients/prerm)
 
