@@ -40,7 +40,7 @@ if(WITH_PYTHON)
 
   configure_file(${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_version.py.cmake ${PROJECT_BINARY_DIR}/tests/TestRunner/fdb_test_runner/fdb_version.py)
 
-  set(TestRunner "${PROJECT_SOURCE_DIR}/tests/TestRunner/fdb_test_runner/TestRunner.py")
+  set(TestRunner "${PROJECT_SOURCE_DIR}/tests/TestRunner/run_test_runner.py")
 
   configure_file(${PROJECT_SOURCE_DIR}/tests/CTestCustom.ctest.cmake ${PROJECT_BINARY_DIR}/CTestCustom.ctest @ONLY)
 
