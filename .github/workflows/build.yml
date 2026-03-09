@@ -186,10 +186,10 @@ jobs:
     needs: [calc_ver, build]
     runs-on: ubuntu-latest
     env:
-      JOSHUA_DB_VER: "6.3.15"
+      JOSHUA_DB_VER: "7.1.57"
       N_OF_TESTS: 500  # to fit in 360 minutes job run limit
-      JOSHUA_AGENT_URL: "docker.io/1inker"
-      JOSHUA_AGENT_TAG: "rhel8-20220816"
+      JOSHUA_AGENT_URL: "docker.io/marksh2010"
+      JOSHUA_AGENT_TAG: "rockylinux9.6-20260309"
 
     steps:
       - name: Checkout
