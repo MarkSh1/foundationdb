@@ -6,15 +6,19 @@ on:
       full_ver:
         description: 'Version of the build to test (e.g. 7.4.0-3.1.ow)'
         required: true
+      build_run_id:
+        description: 'Run ID of the build workflow (find it in the URL of the build run)'
+        required: true
 
 jobs:
   tests:
     runs-on: ubuntu-latest
     env:
       JOSHUA_DB_VER: "7.1.57"
-      N_OF_TESTS: 150
+      N_OF_TESTS: 500
       JOSHUA_AGENT_URL: "docker.io/marksh2010"
       JOSHUA_AGENT_TAG: "rockylinux9.6-20260309"
+      AGENT_TIMEOUT: 18000
 
     steps:
       - name: Checkout
@@ -50,6 +54,8 @@ jobs:
         id: download_correctness
         with:
           name: correctness-${{ github.event.inputs.full_ver }}.tar.gz
+          run-id: ${{ github.event.inputs.build_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Echo download path
         run: echo ${{steps.download_correctness.outputs.download-path}}
@@ -68,7 +74,10 @@ jobs:
         run: |
           podman pull ${{ env.JOSHUA_AGENT_URL }}/joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
           for i in 1 2 3 4; do
-            podman run -d -v /etc/foundationdb:/etc/foundationdb joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
+            podman run -d \
+              -v /etc/foundationdb:/etc/foundationdb \
+              -e AGENT_TIMEOUT=${{ env.AGENT_TIMEOUT }} \
+              joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
           done
 
       - name: run tests
