@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JOSHUA_DB_VER: "7.1.57"
-      N_OF_TESTS: 300  # to fit in 360 minutes job run limit
+      N_OF_TESTS: 150  # to fit in 360 minutes job run limit
       JOSHUA_AGENT_URL: "docker.io/marksh2010"
       JOSHUA_AGENT_TAG: "rockylinux9.6-20260309"
 
@@ -242,8 +242,9 @@ jobs:
         shell: bash
         run: |
           podman pull ${{ env.JOSHUA_AGENT_URL }}/joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
-          podman create --name joshua-agent -v /etc/foundationdb:/etc/foundationdb -it joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
-          podman start joshua-agent
+          for i in 1 2 3 4; do
+            podman run -d -v /etc/foundationdb:/etc/foundationdb joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
+          done
 
       - name: run tests
         shell: bash
