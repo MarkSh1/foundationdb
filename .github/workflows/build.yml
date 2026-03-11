@@ -187,9 +187,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       JOSHUA_DB_VER: "7.1.57"
-      N_OF_TESTS: 150  # to fit in 360 minutes job run limit
+      N_OF_TESTS: 500  # to fit in 360 minutes job run limit
       JOSHUA_AGENT_URL: "docker.io/marksh2010"
       JOSHUA_AGENT_TAG: "rockylinux9.6-20260309"
+      # parameter that controls the maximum lifetime of the Joshua agent (in seconds).
+      AGENT_TIMEOUT: 18000
 
     steps:
       - name: Checkout
@@ -243,7 +245,10 @@ jobs:
         run: |
           podman pull ${{ env.JOSHUA_AGENT_URL }}/joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
           for i in 1 2 3 4; do
-            podman run -d -v /etc/foundationdb:/etc/foundationdb joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
+            podman run -d \
+              -v /etc/foundationdb:/etc/foundationdb \
+              -e AGENT_TIMEOUT=${{ env.AGENT_TIMEOUT }} \
+              joshua-agent:${{ env.JOSHUA_AGENT_TAG }}
           done
 
       - name: run tests
