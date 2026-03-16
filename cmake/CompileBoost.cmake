@@ -86,6 +86,8 @@ function(compile_boost)
                        --with-libraries=${BOOTSTRAP_LIBRARIES}
                        --with-toolset=${BOOST_TOOLSET}
     BUILD_COMMAND      ${B2_COMMAND}
+    # Added -d0 flag to B2_COMMAND to suppress informational Boost build output
+                       -d0
                        link=static ${B2_ADDTTIONAL_BUILD_ARGS}
                        ${COMPILE_BOOST_BUILD_ARGS}
                        --prefix=${BOOST_INSTALL_DIR}
@@ -174,11 +176,9 @@ if(BOOST_ROOT)
 endif()
 
 if(WIN32)
-  # this should be done with the line below -- but apparently the CI is not set up
-  # properly for config mode. So we use the old way on Windows
-  #  find_package(Boost 1.72.0 EXACT QUIET REQUIRED CONFIG PATHS ${BOOST_HINT_PATHS})
-  # I think depending on the cmake version this will cause weird warnings
-  find_package(Boost 1.86 COMPONENTS filesystem iostreams serialization system program_options url)
+  # Use CONFIG mode to prefer Boost's BoostConfig.cmake over deprecated FindBoost module
+  # This is required for CMake 3.30+ compatibility (policy CMP0167)
+  find_package(Boost 1.86.0 EXACT QUIET COMPONENTS filesystem iostreams serialization system program_options url CONFIG PATHS ${BOOST_HINT_PATHS})
   add_library(boost_target INTERFACE)
   target_link_libraries(boost_target INTERFACE Boost::boost Boost::filesystem Boost::iostreams Boost::serialization Boost::system Boost::url)
   

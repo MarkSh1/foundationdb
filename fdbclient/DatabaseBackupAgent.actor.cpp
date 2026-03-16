@@ -243,8 +243,14 @@ struct BackupRangeTaskFunc : TaskFuncBase {
 		// retrieve kvData
 		state PromiseStream<RangeResultWithVersion> results;
 
-		state Future<Void> rc = readCommitted(
-		    taskBucket->src, results, lock, range, Terminator::True, AccessSystemKeys::True, LockAware::True);
+		state Future<Void> rc = readCommitted(taskBucket->src,
+		                                      results,
+		                                      lock,
+		                                      range,
+		                                      Terminator::True,
+		                                      AccessSystemKeys::True,
+		                                      LockAware::True,
+		                                      ReadLowPriority(CLIENT_KNOBS->BACKUP_READS_USE_LOW_PRIORITY));
 		state Key rangeBegin = range.begin;
 		state Key rangeEnd;
 		state bool endOfStream = false;
@@ -903,7 +909,8 @@ struct CopyLogRangeTaskFunc : TaskFuncBase {
 				                           decodeBKMutationLogKey,
 				                           Terminator::True,
 				                           AccessSystemKeys::True,
-				                           LockAware::True));
+				                           LockAware::True,
+				                           ReadLowPriority(CLIENT_KNOBS->BACKUP_READS_USE_LOW_PRIORITY)));
 			}
 
 			// copy the range
@@ -1613,7 +1620,8 @@ struct OldCopyLogRangeTaskFunc : TaskFuncBase {
 			                           decodeBKMutationLogKey,
 			                           Terminator::True,
 			                           AccessSystemKeys::True,
-			                           LockAware::True));
+			                           LockAware::True,
+			                           ReadLowPriority(CLIENT_KNOBS->BACKUP_READS_USE_LOW_PRIORITY)));
 			dump.push_back(dumpData(cx, task, results[i], lock.getPtr(), taskBucket));
 		}
 
@@ -2426,8 +2434,6 @@ void checkAtomicSwitchOverConfig(StatusObjectReader srcStatus, StatusObjectReade
 
 class DatabaseBackupAgentImpl {
 public:
-	static constexpr int MAX_RESTORABLE_FILE_METASECTION_BYTES = 1024 * 8;
-
 	ACTOR static Future<Void> waitUpgradeToLatestDrVersion(DatabaseBackupAgent* backupAgent, Database cx, Key tagName) {
 		state UID logUid = wait(backupAgent->getLogUid(cx, tagName));
 		state Key drVersionKey = backupAgent->config.get(BinaryWriter::toValue(logUid, Unversioned()))

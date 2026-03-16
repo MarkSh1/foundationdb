@@ -61,7 +61,7 @@ public:
 	                           const VectorRef<MutationRef>& mutations_,
 	                           IKeyValueStore* txnStateStore_)
 	  : spanContext(spanContext_), dbgid(dbgid_), arena(arena_), mutations(mutations_), txnStateStore(txnStateStore_),
-	    confChange(dummyConfChange), encryptMode(EncryptionAtRestMode::DISABLED), epoch(Optional<LogEpoch>()) {}
+	    confChange(dummyConfChange), epoch(Optional<LogEpoch>()) {}
 
 	ApplyMetadataMutationsImpl(const SpanContext& spanContext_,
 	                           Arena& arena_,
@@ -69,17 +69,15 @@ public:
 	                           ProxyCommitData& proxyCommitData_,
 	                           Reference<ILogSystem> logSystem_,
 	                           LogPushData* toCommit_,
-	                           const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys_,
-	                           EncryptionAtRestMode encryptMode,
 	                           bool& confChange_,
 	                           Version version,
 	                           Version popVersion_,
 	                           bool initialCommit_,
 	                           bool provisionalCommitProxy_)
 	  : spanContext(spanContext_), dbgid(proxyCommitData_.dbgid), arena(arena_), mutations(mutations_),
-	    txnStateStore(proxyCommitData_.txnStateStore), toCommit(toCommit_), cipherKeys(cipherKeys_),
-	    encryptMode(encryptMode), confChange(confChange_), logSystem(logSystem_), version(version),
-	    popVersion(popVersion_), vecBackupKeys(&proxyCommitData_.vecBackupKeys), keyInfo(&proxyCommitData_.keyInfo),
+	    txnStateStore(proxyCommitData_.txnStateStore), toCommit(toCommit_), confChange(confChange_),
+	    logSystem(logSystem_), version(version), popVersion(popVersion_),
+	    vecBackupKeys(&proxyCommitData_.vecBackupKeys), keyInfo(&proxyCommitData_.keyInfo),
 	    uid_applyMutationsData(proxyCommitData_.firstProxy ? &proxyCommitData_.uid_applyMutationsData : nullptr),
 	    commit(proxyCommitData_.commit), cx(proxyCommitData_.cx), committedVersion(&proxyCommitData_.committedVersion),
 	    storageCache(&proxyCommitData_.storageCache), tag_popped(&proxyCommitData_.tag_popped),
@@ -87,36 +85,20 @@ public:
 	    provisionalCommitProxy(provisionalCommitProxy_),
 	    accumulativeChecksumIndex(getCommitProxyAccumulativeChecksumIndex(proxyCommitData_.commitProxyIndex)),
 	    acsBuilder(proxyCommitData_.acsBuilder), epoch(proxyCommitData_.epoch), rangeLock(proxyCommitData_.rangeLock) {
-		if (encryptMode.isEncryptionEnabled()) {
-			ASSERT(cipherKeys != nullptr);
-			ASSERT(cipherKeys->contains(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID));
-			if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
-				ASSERT(cipherKeys->contains(ENCRYPT_HEADER_DOMAIN_ID));
-			}
-		}
+
 		// If commit proxy, epoch must be set
 		ASSERT(toCommit == nullptr || epoch.present());
 	}
 
 	ApplyMetadataMutationsImpl(const SpanContext& spanContext_,
 	                           ResolverData& resolverData_,
-	                           const VectorRef<MutationRef>& mutations_,
-	                           const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys_,
-	                           EncryptionAtRestMode encryptMode)
+	                           const VectorRef<MutationRef>& mutations_)
 	  : spanContext(spanContext_), dbgid(resolverData_.dbgid), arena(resolverData_.arena), mutations(mutations_),
-	    cipherKeys(cipherKeys_), encryptMode(encryptMode), txnStateStore(resolverData_.txnStateStore),
-	    toCommit(resolverData_.toCommit), confChange(resolverData_.confChanges), logSystem(resolverData_.logSystem),
-	    popVersion(resolverData_.popVersion), keyInfo(resolverData_.keyInfo), storageCache(resolverData_.storageCache),
+	    txnStateStore(resolverData_.txnStateStore), toCommit(resolverData_.toCommit),
+	    confChange(resolverData_.confChanges), logSystem(resolverData_.logSystem), popVersion(resolverData_.popVersion),
+	    keyInfo(resolverData_.keyInfo), storageCache(resolverData_.storageCache),
 	    initialCommit(resolverData_.initialCommit), forResolver(true),
-	    accumulativeChecksumIndex(resolverAccumulativeChecksumIndex), epoch(Optional<LogEpoch>()) {
-		if (encryptMode.isEncryptionEnabled()) {
-			ASSERT(cipherKeys != nullptr);
-			ASSERT(cipherKeys->contains(SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID));
-			if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
-				ASSERT(cipherKeys->contains(ENCRYPT_HEADER_DOMAIN_ID));
-			}
-		}
-	}
+	    accumulativeChecksumIndex(resolverAccumulativeChecksumIndex), epoch(Optional<LogEpoch>()) {}
 
 private:
 	// The following variables are incoming parameters
@@ -135,9 +117,6 @@ private:
 	// non-null if these mutations were part of a new commit handled by this commit proxy
 	LogPushData* toCommit = nullptr;
 
-	// Cipher keys used to encrypt to be committed mutations
-	const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* cipherKeys = nullptr;
-
 	// Flag indicates if the configure is changed
 	bool& confChange;
 
@@ -153,8 +132,6 @@ private:
 	std::map<UID, Reference<StorageInfo>>* storageCache = nullptr;
 	std::map<Tag, Version>* tag_popped = nullptr;
 	std::unordered_map<UID, StorageServerInterface>* tssMapping = nullptr;
-
-	EncryptionAtRestMode encryptMode;
 
 	// true if the mutations were already written to the txnStateStore as part of recovery
 	bool initialCommit = false;
@@ -191,17 +168,7 @@ private:
 	bool dummyConfChange = false;
 
 private:
-	void writeMutation(const MutationRef& m) {
-		if (!encryptMode.isEncryptionEnabled()) {
-			toCommit->writeTypedMessage(m);
-		} else {
-			ASSERT(cipherKeys != nullptr);
-			Arena arena;
-			CODE_PROBE(!forResolver, "encrypting metadata mutations", probe::decoration::rare);
-			CODE_PROBE(forResolver, "encrypting resolver mutations", probe::decoration::rare);
-			toCommit->writeTypedMessage(m.encryptMetadata(*cipherKeys, arena, BlobCipherMetrics::TLOG));
-		}
-	}
+	void writeMutation(const MutationRef& m) { toCommit->writeTypedMessage(m); }
 
 	void checkSetRangeLockPrefix(const MutationRef& m) {
 		if (!m.param1.startsWith(rangeLockPrefix)) {
@@ -209,8 +176,7 @@ private:
 		} else if (rangeLock == nullptr) {
 			TraceEvent(SevWarnAlways, "MutationHasRangeLockPrefixButFeatureIsOff")
 			    .detail("Mutation", m.toString())
-			    .detail("FeatureFlag", SERVER_KNOBS->ENABLE_READ_LOCK_ON_RANGE)
-			    .detail("Encription", encryptMode.isEncryptionEnabled());
+			    .detail("FeatureFlag", SERVER_KNOBS->ENABLE_READ_LOCK_ON_RANGE);
 			return;
 		}
 		ASSERT(!initialCommit);
@@ -584,46 +550,6 @@ private:
 		    .detail("MutationKey", m.param1)
 		    .detail("LogRangeBegin", logRangeBegin)
 		    .detail("LogRangeEnd", logRangeEnd);
-	}
-
-	void checkSetConstructKeys(MutationRef m) {
-		if (!SERVER_KNOBS->GENERATE_DATA_ENABLED) {
-			return;
-		}
-		if (!m.param1.startsWith(globalKeysPrefix)) {
-			return;
-		}
-		if (!toCommit) {
-			return;
-		}
-
-		if (m.param1.startsWith(constructDataKey)) {
-			uint64_t valSize, keyCount, seed;
-			Standalone<StringRef> prefix;
-			std::tie(prefix, valSize, keyCount, seed) = decodeConstructKeys(m.param2);
-			if (prefix.size() == 0 || keyCount >= UINT16_MAX || valSize >= CLIENT_KNOBS->VALUE_SIZE_LIMIT) {
-				return;
-			}
-			uint8_t keyBuf[prefix.size() + sizeof(uint16_t)];
-			uint8_t* keyPos = prefix.copyTo(keyBuf);
-			*keyPos = '\xff';
-			StringRef keyEnd(keyBuf, keyPos - keyBuf + 1);
-			std::set<Tag> allTags;
-			for (auto it : keyInfo->intersectingRanges(KeyRangeRef(prefix, keyEnd))) {
-				auto& r = it.value();
-				for (auto info : r.src_info) {
-					allTags.insert(info->tag);
-				}
-				for (auto info : r.dest_info) {
-					allTags.insert(info->tag);
-				}
-			}
-			toCommit->addTags(allTags);
-			TraceEvent(SevInfo, "ConstructDataRequest")
-			    .detail("Prefix", prefix)
-			    .detail("KeyCount", keyCount)
-			    .detail("ValSize", valSize);
-		}
 	}
 
 	void checkSetGlobalKeys(MutationRef m) {
@@ -1206,7 +1132,6 @@ public:
 				checkSetApplyMutationsEndRange(m);
 				checkSetApplyMutationsKeyVersionMapRange(m);
 				checkSetLogRangesRange(m);
-				checkSetConstructKeys(m);
 				checkSetGlobalKeys(m);
 				checkSetWriteRecoverKey(m);
 				checkSetMinRequiredCommitVersionKey(m);
@@ -1253,8 +1178,6 @@ void applyMetadataMutations(SpanContext const& spanContext,
                             Reference<ILogSystem> logSystem,
                             const VectorRef<MutationRef>& mutations,
                             LogPushData* toCommit,
-                            const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* pCipherKeys,
-                            EncryptionAtRestMode encryptMode,
                             bool& confChange,
                             Version version,
                             Version popVersion,
@@ -1266,8 +1189,6 @@ void applyMetadataMutations(SpanContext const& spanContext,
 	                           proxyCommitData,
 	                           logSystem,
 	                           toCommit,
-	                           pCipherKeys,
-	                           encryptMode,
 	                           confChange,
 	                           version,
 	                           popVersion,
@@ -1278,10 +1199,8 @@ void applyMetadataMutations(SpanContext const& spanContext,
 
 void applyMetadataMutations(SpanContext const& spanContext,
                             ResolverData& resolverData,
-                            const VectorRef<MutationRef>& mutations,
-                            const std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>* pCipherKeys,
-                            EncryptionAtRestMode encryptMode) {
-	ApplyMetadataMutationsImpl(spanContext, resolverData, mutations, pCipherKeys, encryptMode).apply();
+                            const VectorRef<MutationRef>& mutations) {
+	ApplyMetadataMutationsImpl(spanContext, resolverData, mutations).apply();
 }
 
 void applyMetadataMutations(SpanContext const& spanContext,

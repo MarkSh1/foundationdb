@@ -136,7 +136,7 @@ struct TLSCreds {
 	std::string password;
 };
 
-TLSCreds makeCreds(ChainLength chainLen, mkcert::ESide side, StringRef password = {}) {
+TLSCreds makeCreds(const ChainLength chainLen, const mkcert::ESide side, StringRef password = {}) {
 	if (chainLen == 0 || chainLen == NO_TLS) {
 		return TLSCreds{ chainLen == NO_TLS, "", "", "", "" };
 	}

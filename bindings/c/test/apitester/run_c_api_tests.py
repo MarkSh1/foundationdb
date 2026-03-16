@@ -32,15 +32,9 @@ import string
 import toml
 
 # fmt: off
-from tmp_cluster import TempCluster
-from local_cluster import TLSConfig
+from fdb_test_runner.tmp_cluster import TempCluster
+from fdb_test_runner.local_cluster import TLSConfig
 # fmt: on
-
-sys.path[:0] = [
-    os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "tests", "TestRunner"
-    )
-]
 
 TESTER_STATS_INTERVAL_SEC = 5
 
@@ -156,9 +150,6 @@ class TestConfig:
     def __init__(self, test_file):
         config = toml.load(test_file)
         server_config = config.get("server", [{}])[0]
-        self.enable_encryption_at_rest = server_config.get(
-            "enable_encryption_at_rest", False
-        )
         self.tls_enabled = server_config.get("tls_enabled", False)
         self.client_chain_len = server_config.get("tls_client_chain_len", 2)
         self.server_chain_len = server_config.get("tls_server_chain_len", 3)
@@ -182,7 +173,6 @@ def run_test(args, test_file):
     with TempCluster(
         args.build_dir,
         config.num_processes,
-        enable_encryption_at_rest=config.enable_encryption_at_rest,
         tls_config=tls_config,
     ) as cluster:
         ret_code = run_tester(args, cluster, test_file)

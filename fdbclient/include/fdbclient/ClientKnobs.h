@@ -164,6 +164,8 @@ public:
 	int BACKUP_LOCK_BYTES;
 	double BACKUP_RANGE_TIMEOUT;
 	double BACKUP_RANGE_MINWAIT;
+	double BULKDUMP_JOB_TIMEOUT;
+	double BULKLOAD_JOB_TIMEOUT;
 	int BACKUP_SNAPSHOT_DISPATCH_INTERVAL_SEC;
 	int BACKUP_DEFAULT_SNAPSHOT_INTERVAL_SEC;
 	int BACKUP_SHARD_TASK_LIMIT;
@@ -208,6 +210,7 @@ public:
 	bool BACKUP_CONTAINER_LOCAL_ALLOW_RELATIVE_PATH;
 	bool ENABLE_REPLICA_CONSISTENCY_CHECK_ON_BACKUP_READS;
 	int BACKUP_CONSISTENCY_CHECK_REQUIRED_REPLICAS;
+	bool BACKUP_READS_USE_LOW_PRIORITY;
 	int BULKLOAD_JOB_HISTORY_COUNT_MAX; // the max number of bulk load job history to keep. The oldest job history will
 	                                    // be removed when the count exceeds this value. Set to 0 to disable history.
 	                                    // Do not set the value to a large number, e.g. <= 10.
@@ -335,18 +338,6 @@ public:
 	// available again. Using a backoffed retry when it happens.
 	int CHANGE_QUORUM_BAD_STATE_RETRY_TIMES;
 	double CHANGE_QUORUM_BAD_STATE_RETRY_DELAY;
-
-	// Encryption-at-rest
-	bool ENABLE_ENCRYPTION_CPU_TIME_LOGGING;
-	int ENCRYPT_HEADER_FLAGS_VERSION;
-	int ENCRYPT_HEADER_AES_CTR_NO_AUTH_VERSION;
-	int ENCRYPT_HEADER_AES_CTR_AES_CMAC_AUTH_VERSION;
-	int ENCRYPT_HEADER_AES_CTR_HMAC_SHA_AUTH_VERSION;
-	double ENCRYPT_GET_CIPHER_KEY_LONG_REQUEST_THRESHOLD;
-
-	// REST KMS configurations
-	bool REST_KMS_ALLOW_NOT_SECURE_CONNECTION;
-	int SIM_KMS_VAULT_MAX_KEYS;
 
 	bool ENABLE_MUTATION_CHECKSUM;
 	// Enable to start accumulative checksum population and validation

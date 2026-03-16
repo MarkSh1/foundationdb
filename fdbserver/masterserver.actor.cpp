@@ -44,9 +44,6 @@
 template class ReplyPromise<MasterInterface>;
 template struct NetSAV<MasterInterface>;
 
-// Instantiate ServerDBInfo related templates
-template class GetEncryptCipherKeys<struct ServerDBInfo>;
-
 void updateLiveCommittedVersion(Reference<MasterData> self, ReportRawCommittedVersionRequest req);
 
 Version figureVersionCxx(Version current,
@@ -595,21 +592,6 @@ ACTOR Future<Void> masterServerCxx(MasterInterface mi,
 		while (!addActor.isEmpty()) {
 			addActor.getFuture().pop();
 		}
-
-		CODE_PROBE(
-		    err.code() == error_code_tlog_failed, "Master: terminated due to tLog failure", probe::decoration::rare);
-		CODE_PROBE(err.code() == error_code_commit_proxy_failed,
-		           "Master: terminated due to commit proxy failure",
-		           probe::decoration::rare);
-		CODE_PROBE(err.code() == error_code_grv_proxy_failed,
-		           "Master: terminated due to GRV proxy failure",
-		           probe::decoration::rare);
-		CODE_PROBE(err.code() == error_code_resolver_failed,
-		           "Master: terminated due to resolver failure",
-		           probe::decoration::rare);
-		CODE_PROBE(err.code() == error_code_backup_worker_failed,
-		           "Master: terminated due to backup worker failure",
-		           probe::decoration::rare);
 
 		if (normalMasterErrors().contains(err.code())) {
 			TraceEvent("MasterTerminated", mi.id()).error(err);

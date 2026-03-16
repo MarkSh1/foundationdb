@@ -965,6 +965,7 @@ ProcessClass decodeProcessClassValue(ValueRef const& value) {
 const KeyRangeRef configKeys("\xff/conf/"_sr, "\xff/conf0"_sr);
 const KeyRef configKeysPrefix = configKeys.begin;
 
+const KeyRef backupWorkerEnabledKey("\xff/conf/backup_worker_enabled"_sr);
 const KeyRef perpetualStorageWiggleKey("\xff/conf/perpetual_storage_wiggle"_sr);
 const KeyRef perpetualStorageWiggleLocalityKey("\xff/conf/perpetual_storage_wiggle_locality"_sr);
 // The below two are there for compatible upgrade and downgrade. After 7.3, the perpetual wiggle related keys should use
@@ -974,10 +975,6 @@ const KeyRef perpetualStorageWiggleStatsPrefix("\xff/storageWiggleStats/"_sr); /
 const KeyRef perpetualStorageWigglePrefix("\xff/storageWiggle/"_sr);
 
 const KeyRef triggerDDTeamInfoPrintKey("\xff/triggerDDTeamInfoPrint"_sr);
-
-const KeyRef encryptionAtRestModeConfKey("\xff/conf/encryption_at_rest_mode"_sr);
-// TOOD(gglass): see if this can be removed:
-const KeyRef tenantModeConfKey("\xff/conf/tenant_mode"_sr);
 
 const KeyRangeRef excludedServersKeys("\xff/conf/excluded/"_sr, "\xff/conf/excluded0"_sr);
 const KeyRef excludedServersPrefix = excludedServersKeys.begin;
@@ -1144,7 +1141,6 @@ const KeyRef primaryLocalityKey = "\xff/globals/primaryLocality"_sr;
 const KeyRef primaryLocalityPrivateKey = "\xff\xff/globals/primaryLocality"_sr;
 const KeyRef fastLoggingEnabled = "\xff/globals/fastLoggingEnabled"_sr;
 const KeyRef fastLoggingEnabledPrivateKey = "\xff\xff/globals/fastLoggingEnabled"_sr;
-const KeyRef constructDataKey = "\xff/globals/constructData"_sr;
 
 // Whenever configuration changes or DD related system keyspace is changed(e.g.., serverList),
 // actor must grab the moveKeysLockOwnerKey and update moveKeysLockWriteKey.
@@ -1296,6 +1292,10 @@ const KeyRef clusterIdKey = "\xff/clusterIdKey"_sr;
 const KeyRef backupEnabledKey = "\xff/backupEnabled"_sr;
 const KeyRangeRef backupLogKeys("\xff\x02/blog/"_sr, "\xff\x02/blog0"_sr);
 const KeyRangeRef applyLogKeys("\xff\x02/alog/"_sr, "\xff\x02/alog0"_sr);
+// Validate restore prefix (system key space)
+// Usage: fdbbackup restore --add-prefix '\xff\x02/rlog/'
+// TOML: addPrefix = '\xff\x02/rlog/' (unprintable() converts escape sequences to bytes)
+const KeyRangeRef validateRestoreLogKeys("\xff\x02/rlog/"_sr, "\xff\x02/rlog0"_sr);
 bool isBackupLogMutation(const MutationRef& m) {
 	return isSingleKeyMutation((MutationRef::Type)m.type) &&
 	       (backupLogKeys.contains(m.param1) || applyLogKeys.contains(m.param1));
@@ -1503,11 +1503,6 @@ const KeyRangeRef testOnlyTxnStateStorePrefixRange("\xff/TESTONLYtxnStateStore/"
 const KeyRef writeRecoveryKey = "\xff/writeRecovery"_sr;
 const ValueRef writeRecoveryKeyTrue = "1"_sr;
 const KeyRef snapshotEndVersionKey = "\xff/snapshotEndVersion"_sr;
-
-const KeyRef configTransactionDescriptionKey = "\xff\xff/description"_sr;
-const KeyRange globalConfigKnobKeys = singleKeyRange("\xff\xff/globalKnobs"_sr);
-const KeyRangeRef configKnobKeys("\xff\xff/knobs/"_sr, "\xff\xff/knobs0"_sr);
-const KeyRangeRef configClassKeys("\xff\xff/configClasses/"_sr, "\xff\xff/configClasses0"_sr);
 
 const KeyRangeRef idempotencyIdKeys("\xff\x02/idmp/"_sr, "\xff\x02/idmp0"_sr);
 const KeyRef idempotencyIdsExpiredVersion("\xff\x02/idmpExpiredVersion"_sr);

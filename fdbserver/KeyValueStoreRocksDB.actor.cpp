@@ -68,6 +68,7 @@
 #include "fdbserver/Knobs.h"
 #include "fdbserver/IKeyValueStore.h"
 #include "fdbserver/RocksDBCheckpointUtils.actor.h"
+#include "fdbserver/RocksDBCommon.h"
 
 #include "flow/actorcompiler.h" // has to be last include
 
@@ -81,38 +82,14 @@ static_assert(ROCKSDB_PATCH == FDB_ROCKSDB_PATCH, "Unsupported RocksDB patch ver
 namespace {
 using rocksdb::BackgroundErrorReason;
 
-rocksdb::WALRecoveryMode getWalRecoveryMode() {
-	switch (SERVER_KNOBS->ROCKSDB_WAL_RECOVERY_MODE) {
-	case 0:
-		return rocksdb::WALRecoveryMode::kTolerateCorruptedTailRecords;
-	case 1:
-		return rocksdb::WALRecoveryMode::kAbsoluteConsistency;
-	case 2:
-		return rocksdb::WALRecoveryMode::kPointInTimeRecovery;
-	case 3:
-		return rocksdb::WALRecoveryMode::kSkipAnyCorruptedRecords;
-	default:
-		TraceEvent(SevWarn, "InvalidWalRecoveryMode").detail("KnobValue", SERVER_KNOBS->ROCKSDB_WAL_RECOVERY_MODE);
-		return rocksdb::WALRecoveryMode::kPointInTimeRecovery;
-	}
-}
+using RocksDBCommon::getWalRecoveryMode;
 
 rocksdb::CompactionPri getCompactionPriority() {
-	switch (SERVER_KNOBS->ROCKSDB_COMPACTION_PRI) {
-	case 0:
-		return rocksdb::CompactionPri::kByCompensatedSize;
-	case 1:
-		return rocksdb::CompactionPri::kOldestLargestSeqFirst;
-	case 2:
-		return rocksdb::CompactionPri::kOldestSmallestSeqFirst;
-	case 3:
-		return rocksdb::CompactionPri::kMinOverlappingRatio;
-	case 4:
-		return rocksdb::CompactionPri::kRoundRobin;
-	default:
-		TraceEvent(SevWarn, "InvalidCompactionPriority").detail("KnobValue", SERVER_KNOBS->ROCKSDB_COMPACTION_PRI);
-		return rocksdb::CompactionPri::kMinOverlappingRatio;
-	}
+	return RocksDBCommon::getCompactionPriorityFromKnob(SERVER_KNOBS->ROCKSDB_COMPACTION_PRI);
+}
+
+rocksdb::BlockBasedTableOptions::IndexType getIndexType() {
+	return RocksDBCommon::getIndexTypeFromKnob(SERVER_KNOBS->ROCKSDB_INDEX_TYPE);
 }
 
 class SharedRocksDBState {
@@ -198,6 +175,7 @@ rocksdb::ColumnFamilyOptions SharedRocksDBState::initialCfOptions() {
 	options.level0_file_num_compaction_trigger = SERVER_KNOBS->ROCKSDB_LEVEL0_FILENUM_COMPACTION_TRIGGER;
 	options.level0_slowdown_writes_trigger = SERVER_KNOBS->ROCKSDB_LEVEL0_SLOWDOWN_WRITES_TRIGGER;
 	options.level0_stop_writes_trigger = SERVER_KNOBS->ROCKSDB_LEVEL0_STOP_WRITES_TRIGGER;
+	options.max_bytes_for_level_multiplier = SERVER_KNOBS->ROCKSDB_MAX_BYTES_FOR_LEVEL_MULTIPLIER;
 
 	// Compact sstables when there's too much deleted stuff.
 	if (SERVER_KNOBS->ROCKSDB_ENABLE_COMPACT_ON_DELETION) {
@@ -263,6 +241,9 @@ rocksdb::ColumnFamilyOptions SharedRocksDBState::initialCfOptions() {
 	if (SERVER_KNOBS->ROCKSDB_MAX_AUTO_READAHEAD_SIZE > 0) {
 		bbOpts.max_auto_readahead_size = SERVER_KNOBS->ROCKSDB_MAX_AUTO_READAHEAD_SIZE;
 	}
+
+	bbOpts.index_block_restart_interval = SERVER_KNOBS->ROCKSDB_INDEX_BLOCK_RESTART_INTERVAL;
+	bbOpts.index_type = getIndexType();
 
 	options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbOpts));
 
@@ -337,26 +318,8 @@ rocksdb::ReadOptions SharedRocksDBState::initialReadOptions() {
 // Error reason code:
 // https://github.com/facebook/rocksdb/blob/12d798ac06bcce36be703b057d5f5f4dab3b270c/include/rocksdb/listener.h#L125
 // This function needs to be updated when error code changes.
-std::string getErrorReason(BackgroundErrorReason reason) {
-	switch (reason) {
-	case BackgroundErrorReason::kFlush:
-		return format("%d Flush", reason);
-	case BackgroundErrorReason::kCompaction:
-		return format("%d Compaction", reason);
-	case BackgroundErrorReason::kWriteCallback:
-		return format("%d WriteCallback", reason);
-	case BackgroundErrorReason::kMemTable:
-		return format("%d MemTable", reason);
-	case BackgroundErrorReason::kManifestWrite:
-		return format("%d ManifestWrite", reason);
-	case BackgroundErrorReason::kFlushNoWAL:
-		return format("%d FlushNoWAL", reason);
-	case BackgroundErrorReason::kManifestWriteNoWAL:
-		return format("%d ManifestWriteNoWAL", reason);
-	default:
-		return format("%d Unknown", reason);
-	}
-}
+using RocksDBCommon::getErrorReason;
+
 // Background error handling is tested with Chaos test.
 // TODO: Test background error in simulation. RocksDB doesn't use flow IO in simulation, which limits our ability to
 // inject IO errors. We could implement rocksdb::FileSystem using flow IO to unblock simulation. Also, trace event is
@@ -518,13 +481,8 @@ void populateMetaData(CheckpointMetaData* checkpoint, const rocksdb::ExportImpor
 	checkpoint->setSerializedCheckpoint(ObjectWriter::toValue(rocksCF, IncludeVersion()));
 }
 
-rocksdb::Slice toSlice(StringRef s) {
-	return rocksdb::Slice(reinterpret_cast<const char*>(s.begin()), s.size());
-}
-
-StringRef toStringRef(rocksdb::Slice s) {
-	return StringRef(reinterpret_cast<const uint8_t*>(s.data()), s.size());
-}
+using RocksDBCommon::toSlice;
+using RocksDBCommon::toStringRef;
 
 struct Counters {
 	CounterCollection cc;
@@ -2571,10 +2529,6 @@ struct RocksDBKeyValueStore : IKeyValueStore {
 			throw internal_error();
 		}
 		return Void();
-	}
-
-	Future<EncryptionAtRestMode> encryptionMode() override {
-		return EncryptionAtRestMode(EncryptionAtRestMode::DISABLED);
 	}
 
 	Future<Void> ingestSSTFiles(std::shared_ptr<BulkLoadFileSetKeyMap> localFileSets) override {

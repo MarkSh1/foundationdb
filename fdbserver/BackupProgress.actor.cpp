@@ -188,7 +188,6 @@ TEST_CASE("/BackupProgress/Unfinished") {
 	progress.setBackupStartedValue(Optional<Value>("1"_sr));
 
 	std::map<std::tuple<LogEpoch, Version, int>, std::map<Tag, Version>> unfinished = progress.getUnfinishedBackup();
-
 	ASSERT(unfinished.size() == 1);
 	for (const auto& [epochVersionCount, tagVersion] : unfinished) {
 		ASSERT(std::get<0>(epochVersionCount) == epoch1 && std::get<1>(epochVersionCount) == end1 &&

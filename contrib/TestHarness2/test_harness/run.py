@@ -23,6 +23,68 @@ from typing import Dict, List, Pattern, OrderedDict
 from test_harness.summarize import Summary, SummaryTree
 
 
+def parse_test_args_file(args_file: Path) -> tuple[Path, int, bool, List[str]]:
+    """
+    Parse a test args file containing fdbserver arguments.
+    Expected format: '-f tests/fast/CycleTest.toml -s 315315 -b off --reseed-time 100'
+
+    Returns:
+        tuple: (test_file, random_seed, buggify_enabled, extra_args)
+        extra_args contains any arguments not parsed (like --reseed-time 100)
+    """
+    import shlex
+
+    with open(args_file, 'r') as f:
+        content = f.read().strip()
+
+    # Parse the command line arguments
+    args = shlex.split(content)
+
+    test_file: Path | None = None
+    random_seed: int | None = None
+    buggify_enabled: bool = False
+    extra_args: List[str] = []
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == '-f' or arg == '--testfile':
+            if i + 1 < len(args):
+                test_file = Path(args[i + 1])
+                i += 2
+            else:
+                raise ValueError(f"Missing value for {arg}")
+        elif arg == '-s' or arg == '--seed':
+            if i + 1 < len(args):
+                random_seed = int(args[i + 1])
+                i += 2
+            else:
+                raise ValueError(f"Missing value for {arg}")
+        elif arg == '-b' or arg == '--buggify':
+            if i + 1 < len(args):
+                buggify_val = args[i + 1].lower()
+                buggify_enabled = buggify_val in ['on', '1', 'true']
+                i += 2
+            else:
+                raise ValueError(f"Missing value for {arg}")
+        else:
+            # This is an extra argument we don't parse (like --reseed-time)
+            extra_args.append(arg)
+            # If this arg takes a value, include it too
+            if i + 1 < len(args) and not args[i + 1].startswith('-'):
+                extra_args.append(args[i + 1])
+                i += 2
+            else:
+                i += 1
+
+    if test_file is None:
+        raise ValueError("Test file not specified in args file")
+    if random_seed is None:
+        raise ValueError("Random seed not specified in args file")
+
+    return test_file, random_seed, buggify_enabled, extra_args
+
+
 @total_ordering
 class TestDescription:
     def __init__(self, path: Path, name: str, priority: float):
@@ -367,6 +429,7 @@ class TestRun:
         stats: str | None = None,
         expected_unseed: int | None = None,
         will_restart: bool = False,
+        extra_args: List[str] | None = None,
     ):
         self.binary = binary
         self.test_file = test_file
@@ -380,6 +443,7 @@ class TestRun:
         self.old_binary_path: Path = config.old_binaries_path
         self.buggify_enabled: bool = buggify_enabled
         self.fault_injection_enabled: bool = True
+        self.extra_args: List[str] = extra_args if extra_args is not None else []
         self.trace_format: str | None = config.trace_format
         if Version.of_binary(self.binary) < "6.1.0":
             self.trace_format = None
@@ -394,6 +458,7 @@ class TestRun:
             expected_unseed=self.expected_unseed,
             will_restart=will_restart,
             long_running=config.long_running,
+            is_old_binary=False,  # will be set after the run
         )
         self.run_time: int = 0
         self.success = self.run()
@@ -509,6 +574,10 @@ class TestRun:
             # disable traceTooManyLines Error MAX_TRACE_LINES
             command += ["--knob-max-trace-lines=1000000000"]
 
+        # Add any extra arguments from test_args_file
+        if self.extra_args:
+            command += self.extra_args
+
         self.temp_path.mkdir(parents=True, exist_ok=True)
 
         # self.log_test_plan(out)
@@ -539,6 +608,8 @@ class TestRun:
         err_out: str = ""
         try:
             out_bytes, err_bytes = process.communicate(timeout=timeout)
+            # Check if we're running with an old binary (restarting test with non-current binary)
+            self.is_old_binary = (self.binary != config.binary)
             # Try normal UTF-8 decode first
             try:
                 out = out_bytes.decode('utf-8') if out_bytes else ""
@@ -548,9 +619,7 @@ class TestRun:
                 decode_error_occurred = True
                 out = out_bytes.decode('utf-8', errors='replace') if out_bytes else ""
                 err_out = err_bytes.decode('utf-8', errors='replace') if err_bytes else ""
-                # Check if we're running with an old binary (restarting test with non-current binary)
-                is_old_binary = self.binary != config.binary
-                if is_old_binary:
+                if self.is_old_binary:
                     print(f"WARNING: UnicodeDecodeError at position {decode_ex.start} - invalid byte {hex(out_bytes[decode_ex.start])}. Output decoded with replacement. (Old binary - not failing test)", file=sys.stderr)
                     # Don't fail tests for old binaries - we can't fix them
                 else:
@@ -575,16 +644,16 @@ class TestRun:
         self.summary.was_killed = did_kill
         self.summary.valgrind_out_file = valgrind_file
         self.summary.error_out = err_out
-        
+        self.summary.is_old_binary = self.is_old_binary
+
         # Add diagnostic info if decode error occurred (BEFORE summarize calculates Ok attribute)
         if decode_error_occurred:
-            is_old_binary = self.binary != config.binary
             decode_error_node = SummaryTree("UnicodeDecodeError")
             # Use Severity 30 (warning) for old binaries, 40 (error) for current binary
-            decode_error_node.attributes["Severity"] = "30" if is_old_binary else "40"
+            decode_error_node.attributes["Severity"] = "30" if self.is_old_binary else "40"
             decode_error_node.attributes["Message"] = "fdbserver output contained invalid UTF-8 bytes. Output decoded with replacement characters."
             decode_error_node.attributes["Position"] = "Check fdbserver.stdout for � characters"
-            if is_old_binary:
+            if self.is_old_binary:
                 decode_error_node.attributes["Note"] = "Old binary - binary output tolerated"
             self.summary.out.append(decode_error_node)
         
@@ -898,18 +967,23 @@ class TestRunner:
             print(f"DEBUG: Conditions NOT met for joshua_logtool execution", file=sys.stderr)
 
     def run_tests(
-        self, test_files: List[Path], seed: int, test_picker: TestPicker
+        self, test_files: List[Path], seed: int, test_picker: TestPicker, extra_args: List[str] | None = None, override_buggify: bool | None = None, track_stats: bool = True
     ) -> bool:
         result: bool = True
         for count, file in enumerate(test_files):
             will_restart = count + 1 < len(test_files)
             binary = self.binary_chooser.choose_binary(file)
+            # Skip determinism check when running from test_args_file (track_stats=False)
             unseed_check = (
-                not is_no_sim(file)
+                track_stats
+                and not is_no_sim(file)
                 and config.random.random() < config.unseed_check_ratio
             )
             buggify_enabled: bool = False
-            if config.buggify.value == BuggifyOptionValue.ON:
+            if override_buggify is not None:
+                # Use the buggify setting from the args file
+                buggify_enabled = override_buggify
+            elif config.buggify.value == BuggifyOptionValue.ON:
                 buggify_enabled = True
             elif config.buggify.value == BuggifyOptionValue.RANDOM:
                 buggify_enabled = config.random.random() < config.buggify_on_ratio
@@ -924,9 +998,11 @@ class TestRunner:
                 stats=test_picker.dump_stats(),
                 will_restart=will_restart,
                 buggify_enabled=buggify_enabled,
+                extra_args=extra_args,
             )
             result = result and run.success
-            test_picker.add_time(test_files[0], run.run_time, run.summary.out)
+            if track_stats:
+                test_picker.add_time(test_files[0], run.run_time, run.summary.out)
             decorate_summary(run.summary.out, file, seed + count, run.buggify_enabled, run.temp_path)
             if (
                 unseed_check
@@ -961,8 +1037,10 @@ class TestRunner:
                     expected_unseed=run.summary.unseed,
                     will_restart=will_restart,
                     buggify_enabled=buggify_enabled,
+                    extra_args=extra_args,
                 )
-                test_picker.add_time(file, run2.run_time, run.summary.out)
+                if track_stats:
+                    test_picker.add_time(file, run2.run_time, run.summary.out)
                 decorate_summary(
                     run2.summary.out, file, seed + count, run.buggify_enabled, run2.temp_path
                 )
@@ -983,13 +1061,23 @@ class TestRunner:
         return result
 
     def run(self) -> bool:
-        seed = (
-            config.random_seed
-            if config.random_seed is not None
-            else config.random.randint(0, 2**32 - 1)
-        )
-        test_files = self.test_picker.choose_test()
-        success = self.run_tests(test_files, seed, self.test_picker)
+        if config.test_args_file is not None:
+            # Parse the args file to get test parameters
+            test_file, seed, buggify_enabled, extra_args = parse_test_args_file(config.test_args_file)
+            # Convert relative test file path to absolute
+            if not test_file.is_absolute():
+                test_file = config.test_source_dir / test_file
+            test_files = [test_file]
+            success = self.run_tests(test_files, seed, self.test_picker, extra_args=extra_args, override_buggify=buggify_enabled, track_stats=False)
+        else:
+            # Normal test execution flow
+            seed = (
+                config.random_seed
+                if config.random_seed is not None
+                else config.random.randint(0, 2**32 - 1)
+            )
+            test_files = self.test_picker.choose_test()
+            success = self.run_tests(test_files, seed, self.test_picker)
 
         # Check if we should preserve logs on failure
         archive_logs_on_failure = os.getenv("TH_ARCHIVE_LOGS_ON_FAILURE", "false").lower() in ("true", "1", "yes")

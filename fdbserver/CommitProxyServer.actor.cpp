@@ -26,7 +26,6 @@
 #include "fdbclient/AccumulativeChecksum.h"
 #include "fdbclient/Atomic.h"
 #include "fdbclient/BackupAgent.actor.h"
-#include "fdbclient/BlobCipher.h"
 #include "fdbclient/BuildIdempotencyIdMutations.h"
 #include "fdbclient/CommitTransaction.h"
 #include "fdbclient/DatabaseContext.h"
@@ -44,7 +43,6 @@
 #include "fdbserver/ConflictSet.h"
 #include "fdbserver/DataDistributorInterface.h"
 #include "fdbserver/FDBExecHelper.actor.h"
-#include "fdbclient/GetEncryptCipherKeys.h"
 #include "fdbserver/IKeyValueStore.h"
 #include "fdbserver/Knobs.h"
 #include "fdbserver/LogSystem.h"
@@ -531,10 +529,6 @@ struct CommitBatchContext {
 	// The current stage of batch commit
 	std::string_view stage = UNSET;
 
-	// If encryption is enabled this value represents the total time (in nanoseconds) that was spent on encryption in
-	// the commit proxy for a given Commit Batch
-	Optional<double> encryptionTime;
-
 	Optional<UID> debugID;
 
 	bool forceRecovery = false;
@@ -608,9 +602,6 @@ struct CommitBatchContext {
 	std::unordered_map<uint16_t, Version> tpcvMap; // obtained from resolver
 	std::set<Tag> writtenTags; // final set tags written to in the batch
 	std::set<Tag> writtenTagsPreResolution; // tags written to in the batch not including any changes from the resolver.
-
-	// Cipher keys to be used to encrypt mutations
-	std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys;
 
 	IdempotencyIdKVBuilder idempotencyKVBuilder;
 
@@ -929,23 +920,6 @@ ACTOR Future<Void> preresolutionProcessing(CommitBatchContext* self) {
 	return Void();
 }
 
-namespace {
-
-EncryptCipherDomainId getEncryptDetailsFromMutationRef(ProxyCommitData* commitData, MutationRef m) {
-	EncryptCipherDomainId domainId = INVALID_ENCRYPT_DOMAIN_ID;
-
-	if (isSystemKey(m.param1)) {
-		// Encryption domain == FDB SystemKeyspace encryption domain
-		domainId = SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID;
-	} else {
-		domainId = FDB_DEFAULT_ENCRYPT_DOMAIN_ID;
-	}
-
-	return domainId;
-}
-
-} // namespace
-
 ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	state double resolutionStart = g_network->timer_monotonic();
 	// Sending these requests is the fuzzy border between phase 1 and phase 2; it could conceivably overlap with
@@ -990,18 +964,6 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	// Used to report conflicting keys
 	self->txReadConflictRangeIndexMap.swap(requests.txReadConflictRangeIndexMap);
 
-	// Fetch cipher keys if needed.
-	state Future<std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>>> getCipherKeys;
-	if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
-		std::unordered_set<EncryptCipherDomainId> encryptDomainIds = { SYSTEM_KEYSPACE_ENCRYPT_DOMAIN_ID,
-			                                                           FDB_DEFAULT_ENCRYPT_DOMAIN_ID };
-		if (FLOW_KNOBS->ENCRYPT_HEADER_AUTH_TOKEN_ENABLED) {
-			encryptDomainIds.insert(ENCRYPT_HEADER_DOMAIN_ID);
-		}
-		getCipherKeys = GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(
-		    pProxyCommitData->db, encryptDomainIds, BlobCipherMetrics::TLOG, pProxyCommitData->encryptionMonitor);
-	}
-
 	self->releaseFuture = releaseResolvingAfter(pProxyCommitData, self->releaseDelay, self->localBatchNumber);
 
 	if (self->localBatchNumber - self->pProxyCommitData->latestLocalCommitBatchLogging.get() >
@@ -1022,17 +984,10 @@ ACTOR Future<Void> getResolution(CommitBatchContext* self) {
 	std::vector<ResolveTransactionBatchReply> resolutionResp = wait(getAll(replies));
 	self->resolution.swap(*const_cast<std::vector<ResolveTransactionBatchReply>*>(&resolutionResp));
 
-	double resolutionDuration = g_network->timer_monotonic() - resolutionStart;
-
-	self->pProxyCommitData->stats.commitResolutionLatency.addMeasurement(resolutionDuration);
 	self->pProxyCommitData->stats.resolutionDist->sampleSeconds(g_network->timer_monotonic() - resolutionStart);
 	if (self->debugID.present()) {
 		g_traceBatch.addEvent(
 		    "CommitDebug", self->debugID.get().first(), "CommitProxyServer.commitBatch.AfterResolution");
-	}
-	if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
-		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cipherKeys = wait(getCipherKeys);
-		self->cipherKeys = cipherKeys;
 	}
 
 	return Void();
@@ -1119,15 +1074,12 @@ void applyMetadataEffect(CommitBatchContext* self) {
 			}
 
 			if (committed) {
-				// Note: since we are not to commit, we don't need to pass cipherKeys for encryption.
 				applyMetadataMutations(SpanContext(),
 				                       *self->pProxyCommitData,
 				                       self->arena,
 				                       self->pProxyCommitData->logSystem,
 				                       self->resolution[0].stateMutations[versionIndex][transactionIndex].mutations,
 				                       /* pToCommit= */ nullptr,
-				                       /* pCipherKeys= */ nullptr,
-				                       EncryptionAtRestMode::DISABLED,
 				                       self->forceRecovery,
 				                       /* version= */ self->commitVersion,
 				                       /* popVersion= */ 0,
@@ -1217,8 +1169,6 @@ ACTOR Future<Void> applyMetadataToCommittedTransactions(CommitBatchContext* self
 			                       pProxyCommitData->logSystem,
 			                       trs[t].transaction.mutations,
 			                       SERVER_KNOBS->PROXY_USE_RESOLVER_PRIVATE_MUTATIONS ? nullptr : &self->toCommit,
-			                       &self->cipherKeys,
-			                       pProxyCommitData->encryptMode,
 			                       self->forceRecovery,
 			                       self->commitVersion,
 			                       self->commitVersion + 1,
@@ -1292,15 +1242,10 @@ void pushToBackupMutations(CommitBatchContext* self,
                            ProxyCommitData* const pProxyCommitData,
                            Arena& arena,
                            MutationRef const& m,
-                           MutationRef const& writtenMutation,
-                           Optional<MutationRef> const& encryptedMutation) {
+                           MutationRef const& writtenMutation) {
 	if (m.type != MutationRef::Type::ClearRange) {
-		ASSERT(!pProxyCommitData->encryptMode.isEncryptionEnabled() || writtenMutation.isEncrypted());
-
 		// Add the mutation to the relevant backup tag
 		for (auto backupName : pProxyCommitData->vecBackupKeys[m.param1]) {
-			// If encryption is enabled make sure the mutation we are writing is also encrypted
-			CODE_PROBE(writtenMutation.isEncrypted(), "using encrypted backup mutation", probe::decoration::rare);
 			self->logRangeMutations[backupName].push_back_deep(self->logRangeMutationsArena, writtenMutation);
 		}
 	} else {
@@ -1317,20 +1262,6 @@ void pushToBackupMutations(CommitBatchContext* self,
 
 			// Create the custom mutation for the specific backup tag
 			MutationRef backupMutation(MutationRef::Type::ClearRange, intersectionRange.begin, intersectionRange.end);
-
-			if (pProxyCommitData->encryptMode.isEncryptionEnabled()) {
-				CODE_PROBE(true, "encrypting clear range backup mutation", probe::decoration::rare);
-				if (backupMutation.param1 == m.param1 && backupMutation.param2 == m.param2 &&
-				    encryptedMutation.present()) {
-					backupMutation = encryptedMutation.get();
-				} else {
-					EncryptCipherDomainId domainId = getEncryptDetailsFromMutationRef(pProxyCommitData, backupMutation);
-					double encryptionTimeV = 0;
-					backupMutation = backupMutation.encrypt(
-					    self->cipherKeys, domainId, arena, BlobCipherMetrics::BACKUP, &encryptionTimeV);
-				}
-			}
-			ASSERT(!pProxyCommitData->encryptMode.isEncryptionEnabled() || backupMutation.isEncrypted());
 
 			// Add the mutation to the relevant backup tag
 			for (auto backupName : backupRange.value()) {
@@ -1373,7 +1304,7 @@ void addAccumulativeChecksumMutations(CommitBatchContext* self) {
 		self->toCommit.writeTypedMessage(acsMutation);
 	}
 }
-// RangeLock takes effect only when the feature flag is on and database is unlocked and the mutation is not encrypted
+
 void rejectMutationsForReadLockOnRange(CommitBatchContext* self) {
 	ASSERT(self->rangeLockEnabled());
 	ProxyCommitData* const pProxyCommitData = self->pProxyCommitData;
@@ -1386,13 +1317,8 @@ void rejectMutationsForReadLockOnRange(CommitBatchContext* self) {
 			continue; // rangeLock is transparent to lock-aware transactions
 		}
 		VectorRef<MutationRef>* pMutations = &trs[i].transaction.mutations;
-		bool transactionRejected = false;
 		for (int j = 0; j < pMutations->size(); j++) {
 			MutationRef m = (*pMutations)[j];
-			ASSERT_WE_THINK(!m.isEncrypted());
-			if (m.isEncrypted()) {
-				continue;
-			}
 			KeyRange rangeToCheck;
 			if (isSingleKeyMutation((MutationRef::Type)m.type)) {
 				rangeToCheck = singleKeyRange(m.param1);
@@ -1403,14 +1329,10 @@ void rejectMutationsForReadLockOnRange(CommitBatchContext* self) {
 			if (shouldReject) {
 				self->committed[i] = ConflictBatch::TransactionLockReject;
 				trs[i].reply.sendError(transaction_rejected_range_locked());
-				transactionRejected = true;
-			}
-			if (transactionRejected) {
 				break;
 			}
 		}
 	}
-	return;
 }
 
 /// This second pass through committed transactions assigns the actual mutations to the appropriate storage servers'
@@ -1429,14 +1351,7 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 		state Optional<ClientTrCommitCostEstimation>* trCost = &trs[self->transactionNum].commitCostEstimation;
 		state int mutationNum = 0;
 		state VectorRef<MutationRef>* pMutations = &trs[self->transactionNum].transaction.mutations;
-		state VectorRef<Optional<MutationRef>>* encryptedMutations =
-		    &trs[self->transactionNum].transaction.encryptedMutations;
 
-		if (!encryptedMutations->empty()) {
-			ASSERT_EQ(encryptedMutations->size(), pMutations->size());
-		}
-
-		state int64_t encryptDomain = FDB_DEFAULT_ENCRYPT_DOMAIN_ID;
 		self->toCommit.addTransactionInfo(trs[self->transactionNum].spanContext);
 
 		for (; mutationNum < pMutations->size(); mutationNum++) {
@@ -1450,14 +1365,12 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 			}
 
 			state MutationRef m = (*pMutations)[mutationNum];
-			state Optional<MutationRef> encryptedMutation =
-			    encryptedMutations->size() > 0 ? (*encryptedMutations)[mutationNum] : Optional<MutationRef>();
 			state Arena arena;
 			state MutationRef writtenMutation;
 			self->mutationCount++;
 			self->mutationBytes += m.expectedSize();
 			self->yieldBytes += m.expectedSize();
-			ASSERT(!m.isEncrypted());
+
 			// Determine the set of tags (responsible storage servers) for the mutation, splitting it
 			// if necessary.  Serialize (splits of) the mutation into the message buffer and add the tags.
 			if (isSingleKeyMutation((MutationRef::Type)m.type)) {
@@ -1484,21 +1397,8 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 					}
 				}
 
-				if (pProxyCommitData->singleKeyMutationEvent->enabled) {
-					KeyRangeRef shard = pProxyCommitData->keyInfo.rangeContaining(m.param1).range();
-					pProxyCommitData->singleKeyMutationEvent->tag1 = (int64_t)tags[0].id;
-					pProxyCommitData->singleKeyMutationEvent->tag2 = (int64_t)tags[1].id;
-					pProxyCommitData->singleKeyMutationEvent->tag3 = (int64_t)tags[2].id;
-					pProxyCommitData->singleKeyMutationEvent->shardBegin = shard.begin;
-					pProxyCommitData->singleKeyMutationEvent->shardEnd = shard.end;
-					pProxyCommitData->singleKeyMutationEvent->log();
-				}
-
 				DEBUG_MUTATION("ProxyCommit", self->commitVersion, m, pProxyCommitData->dbgid).detail("To", tags);
 				self->toCommit.addTags(tags);
-				if (encryptedMutation.present()) {
-					ASSERT(encryptedMutation.get().isEncrypted());
-				}
 
 				if (pProxyCommitData->acsBuilder != nullptr) {
 					updateMutationWithAcsAndAddMutationToAcsBuilder(
@@ -1615,7 +1515,7 @@ ACTOR Future<Void> assignMutationsToStorageServers(CommitBatchContext* self) {
 				continue;
 			}
 
-			pushToBackupMutations(self, pProxyCommitData, arena, m, writtenMutation, encryptedMutation);
+			pushToBackupMutations(self, pProxyCommitData, arena, m, writtenMutation);
 		}
 
 		if (checkSample) {
@@ -1710,44 +1610,34 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 	// if the operation was detected at pre resolution time. This ensures that the
 	// operation is broadcast to all logs, and does not lead to logs being included
 	// that are not part of the expected tag set (tpcv).
-	buildIdempotencyIdMutations(
-	    self->trs,
-	    self->idempotencyKVBuilder,
-	    self->commitVersion,
-	    self->committed,
-	    ConflictBatch::TransactionCommitted,
-	    self->locked,
-	    [&](const KeyValue& kv) {
-		    MutationRef idempotencyIdSet;
-		    idempotencyIdSet.type = MutationRef::Type::SetValue;
-		    idempotencyIdSet.param1 = kv.key;
-		    idempotencyIdSet.param2 = kv.value;
-		    auto& tags = pProxyCommitData->tagsForKey(kv.key);
-		    ASSERT(!SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST ||
-		           pProxyCommitData->db->get().logSystemConfig.numLogs() == self->tpcvMap.size());
-		    self->toCommit.addTags(tags);
-		    if (self->pProxyCommitData->encryptMode.isEncryptionEnabled()) {
-			    CODE_PROBE(true, "encrypting idempotency mutation", probe::decoration::rare);
-			    EncryptCipherDomainId domainId =
-			        getEncryptDetailsFromMutationRef(self->pProxyCommitData, idempotencyIdSet);
-			    MutationRef encryptedMutation =
-			        idempotencyIdSet.encrypt(self->cipherKeys, domainId, self->arena, BlobCipherMetrics::TLOG);
-			    ASSERT(encryptedMutation.isEncrypted());
-			    self->toCommit.writeTypedMessage(encryptedMutation);
-		    } else {
-			    if (pProxyCommitData->acsBuilder != nullptr) {
-				    updateMutationWithAcsAndAddMutationToAcsBuilder(
-				        pProxyCommitData->acsBuilder,
-				        idempotencyIdSet,
-				        tags,
-				        getCommitProxyAccumulativeChecksumIndex(pProxyCommitData->commitProxyIndex),
-				        pProxyCommitData->epoch,
-				        self->commitVersion,
-				        pProxyCommitData->dbgid);
-			    }
-			    self->toCommit.writeTypedMessage(idempotencyIdSet);
-		    }
-	    });
+	buildIdempotencyIdMutations(self->trs,
+	                            self->idempotencyKVBuilder,
+	                            self->commitVersion,
+	                            self->committed,
+	                            ConflictBatch::TransactionCommitted,
+	                            self->locked,
+	                            [&](const KeyValue& kv) {
+		                            MutationRef idempotencyIdSet;
+		                            idempotencyIdSet.type = MutationRef::Type::SetValue;
+		                            idempotencyIdSet.param1 = kv.key;
+		                            idempotencyIdSet.param2 = kv.value;
+		                            auto& tags = pProxyCommitData->tagsForKey(kv.key);
+		                            ASSERT(!SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST ||
+		                                   pProxyCommitData->db->get().logSystemConfig.numLogs() ==
+		                                       self->tpcvMap.size());
+		                            self->toCommit.addTags(tags);
+		                            if (pProxyCommitData->acsBuilder != nullptr) {
+			                            updateMutationWithAcsAndAddMutationToAcsBuilder(
+			                                pProxyCommitData->acsBuilder,
+			                                idempotencyIdSet,
+			                                tags,
+			                                getCommitProxyAccumulativeChecksumIndex(pProxyCommitData->commitProxyIndex),
+			                                pProxyCommitData->epoch,
+			                                self->commitVersion,
+			                                pProxyCommitData->dbgid);
+		                            }
+		                            self->toCommit.writeTypedMessage(idempotencyIdSet);
+	                            });
 
 	if (!SERVER_KNOBS->ENABLE_VERSION_VECTOR_TLOG_UNICAST ||
 	    pProxyCommitData->db->get().logSystemConfig.numLogs() == self->tpcvMap.size()) {
@@ -1911,9 +1801,6 @@ ACTOR Future<Void> postResolution(CommitBatchContext* self) {
 		}
 	}
 
-	double postResolutionEnd = g_network->timer_monotonic();
-
-	pProxyCommitData->stats.commitPostresolutionLatency.addMeasurement(postResolutionEnd - postResolutionStart);
 	pProxyCommitData->stats.processingMutationDist->sampleSeconds(g_network->timer_monotonic() - postResolutionQueuing);
 	return Void();
 }
@@ -1956,9 +1843,6 @@ ACTOR Future<Void> transactionLogging(CommitBatchContext* self) {
 		pProxyCommitData->txsPopVersions.emplace_back(self->commitVersion, self->msg.popTo);
 	}
 	pProxyCommitData->logSystem->popTxs(self->msg.popTo);
-	double tLoggingDuration = g_network->timer_monotonic() - tLoggingStart;
-
-	pProxyCommitData->stats.commitTLogLoggingLatency.addMeasurement(tLoggingDuration);
 	pProxyCommitData->stats.tlogLoggingDist->sampleSeconds(g_network->timer_monotonic() - tLoggingStart);
 	return Void();
 }
@@ -2115,9 +1999,6 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 		    ExpectedIdempotencyIdCountForKey{ self->commitVersion, count, highOrderBatchIndex });
 	}
 
-	if (self->pProxyCommitData->encryptMode.isEncryptionEnabled() && self->encryptionTime.present()) {
-		pProxyCommitData->stats.encryptionLatencySample.addMeasurement(self->encryptionTime.get());
-	}
 	++pProxyCommitData->stats.commitBatchOut;
 	pProxyCommitData->stats.txnCommitOut += self->trs.size();
 	pProxyCommitData->stats.txnConflicts += self->trs.size() - self->commitCount;
@@ -2165,10 +2046,6 @@ ACTOR Future<Void> reply(CommitBatchContext* self) {
 	pProxyCommitData->commitBatchesMemBytesCount -= self->currentBatchMemBytesCount;
 	ASSERT_ABORT(pProxyCommitData->commitBatchesMemBytesCount >= 0);
 	wait(self->releaseFuture);
-	
-	double replyDuration = g_network->timer_monotonic() - replyStart;
-
-	pProxyCommitData->stats.commitReplyLatency.addMeasurement(replyDuration);
 	pProxyCommitData->stats.replyCommitDist->sampleSeconds(g_network->timer_monotonic() - replyStart);
 	return Void();
 }
@@ -2188,8 +2065,6 @@ ACTOR Future<Void> commitBatchImpl(CommitBatchContext* pContext) {
 	pContext->pProxyCommitData->lastVersionTime = pContext->startTime;
 	++pContext->pProxyCommitData->stats.commitBatchIn;
 	pContext->setupTraceBatch();
-	pContext->pProxyCommitData->stats.commitBatchBytes.addMeasurement(pContext->currentBatchMemBytesCount);
-	pContext->pProxyCommitData->stats.commitBatchTransactions.addMeasurement(pContext->trs.size());
 
 	/////// Phase 1: Pre-resolution processing (CPU bound except waiting for a version # which is separately pipelined
 	/// and *should* be available by now (unless empty commit); ordered; currently atomic but could yield)
@@ -2229,20 +2104,10 @@ ACTOR Future<Void> commitBatch(ProxyCommitData* pCommitData,
                                int currentBatchMemBytesCount) {
 
 	state CommitBatch::CommitBatchContext context(pCommitData, trs, currentBatchMemBytesCount);
+	state Future<Void> commit = CommitBatch::commitBatchImpl(&context);
 
-	Future<Void> commit = CommitBatch::commitBatchImpl(&context);
-
-	// When encryption is enabled, cipher key fetching issue (e.g KMS outage) is detected by the
-	// encryption monitor. In that case, commit timeout is expected and timeout error is suppressed. But
-	// we still want to trigger recovery occasionally (with the COMMIT_PROXY_MAX_LIVENESS_TIMEOUT), in
-	// the hope that the cipher key fetching issue could be resolve by recovery (e.g, if one CP have
-	// networking issue connecting to EKP, and recovery may exclude the CP).
-	Future<Void> livenessTimeout = timeoutErrorIfCleared(
-	    commit, pCommitData->encryptionMonitor->degraded(), SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT);
-
-	Future<Void> maxLivenessTimeout = timeoutError(livenessTimeout, SERVER_KNOBS->COMMIT_PROXY_MAX_LIVENESS_TIMEOUT);
 	try {
-		wait(maxLivenessTimeout);
+		wait(timeoutError(commit, SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT));
 	} catch (Error& err) {
 		TraceEvent(SevInfo, "CommitBatchFailed", pCommitData->dbgid)
 		    .detail("Stage", context.stage)
@@ -2418,7 +2283,6 @@ ACTOR static Future<Void> rejoinServer(CommitProxyInterface proxy, ProxyCommitDa
 				    .detail("Tag", rep.tag.toString())
 				    .detail("DcId", req.dcId);
 			}
-			rep.encryptMode = commitData->encryptMode;
 			req.reply.send(rep);
 		} else {
 			req.reply.sendError(worker_removed());
@@ -2788,16 +2652,6 @@ ACTOR Future<Void> processCompleteTransactionStateRequest(TransactionStateResolv
 		tag_uid[decodeServerTagValue(kv.value)] = decodeServerTagKey(kv.key);
 	}
 
-	state std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> systemCipherKeys;
-	if (pContext->pCommitData->encryptMode.isEncryptionEnabled()) {
-		std::unordered_map<EncryptCipherDomainId, Reference<BlobCipherKey>> cks = wait(
-		    GetEncryptCipherKeys<ServerDBInfo>::getLatestEncryptCipherKeys(pContext->pCommitData->db,
-		                                                                   ENCRYPT_CIPHER_SYSTEM_DOMAINS,
-		                                                                   BlobCipherMetrics::TLOG,
-		                                                                   pContext->pCommitData->encryptionMonitor));
-		systemCipherKeys = cks;
-	}
-
 	loop {
 		wait(yield());
 
@@ -2861,17 +2715,12 @@ ACTOR Future<Void> processCompleteTransactionStateRequest(TransactionStateResolv
 
 		Arena arena;
 		bool confChanges;
-		CODE_PROBE(
-		    pContext->pCommitData->encryptMode.isEncryptionEnabled(),
-		    "Commit proxy apply metadata mutations from txnStateStore on recovery, with encryption-at-rest enabled");
 		applyMetadataMutations(SpanContext(),
 		                       *pContext->pCommitData,
 		                       arena,
 		                       Reference<ILogSystem>(),
 		                       mutations,
 		                       /* pToCommit= */ nullptr,
-		                       &systemCipherKeys,
-		                       pContext->pCommitData->encryptMode,
 		                       confChanges,
 		                       /* version= */ 0,
 		                       /* popVersion= */ 0,
@@ -3002,7 +2851,6 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
                                          Version recoveryTransactionVersion,
                                          bool firstProxy,
                                          std::string whitelistBinPaths,
-                                         EncryptionAtRestMode encryptMode,
                                          bool provisional,
                                          uint16_t commitProxyIndex) {
 	state ProxyCommitData commitData(proxy.id(),
@@ -3012,7 +2860,6 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 	                                 proxy.commit,
 	                                 db,
 	                                 firstProxy,
-	                                 encryptMode,
 	                                 provisional,
 	                                 commitProxyIndex,
 	                                 epoch);
@@ -3025,18 +2872,14 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 	state PromiseStream<Future<Void>> addActor;
 	state Future<Void> onError = transformError(actorCollection(addActor.getFuture()), broken_promise(), tlog_failed());
 
-	TraceEvent("CPEncryptionAtRestMode", proxy.id()).detail("Mode", commitData.encryptMode);
-
 	addActor.send(waitFailureServer(proxy.waitFailure.getFuture()));
 	addActor.send(traceRole(Role::COMMIT_PROXY, proxy.id()));
 
 	//TraceEvent("CommitProxyInit1", proxy.id());
 
 	// Wait until we can load the "real" logsystem, since we don't support switching them currently
-	while (
-	    !(masterLifetime.isEqual(commitData.db->get().masterLifetime) &&
-	      commitData.db->get().recoveryState >= RecoveryState::RECOVERY_TRANSACTION &&
-	      (!commitData.encryptMode.isEncryptionEnabled() || commitData.db->get().client.encryptKeyProxy.present()))) {
+	while (!(masterLifetime.isEqual(commitData.db->get().masterLifetime) &&
+	         commitData.db->get().recoveryState >= RecoveryState::RECOVERY_TRANSACTION)) {
 		//TraceEvent("ProxyInit2", proxy.id()).detail("LSEpoch", db->get().logSystemConfig.epoch).detail("Need", epoch);
 		wait(commitData.db->onChange());
 	}
@@ -3060,9 +2903,8 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 	commitData.logSystem = ILogSystem::fromServerDBInfo(proxy.id(), commitData.db->get(), false, addActor);
 	commitData.logAdapter =
 	    new LogSystemDiskQueueAdapter(commitData.logSystem, Reference<AsyncVar<PeekTxsInfo>>(), 1, false);
-	// TODO: Pass the encrypt mode once supported in IKeyValueStore
 	commitData.txnStateStore = keyValueStoreLogSystem(
-	    commitData.logAdapter, commitData.db, proxy.id(), 2e9, true, true, true, encryptMode.isEncryptionEnabled());
+	    commitData.logAdapter, commitData.db, proxy.id(), 2e9, /*doc=*/true, /*ument=*/true, /*constants=*/true);
 	createWhitelistBinPathVec(whitelistBinPaths, commitData.whitelistedBinPathVec);
 
 	commitData.updateLatencyBandConfig(commitData.db->get().latencyBandConfig);
@@ -3158,18 +3000,12 @@ ACTOR Future<Void> commitProxyServerCore(CommitProxyInterface proxy,
 			     masterLifetime.isEqual(commitData.db->get().masterLifetime) && lastCommitComplete.isReady())) {
 
 				lastCommitComplete =
-				    tag(transformError(timeoutError(commitBatch(&commitData,
-				                                                const_cast<std::vector<CommitTransactionRequest>*>(
-				                                                    &batchedRequests.first),
-				                                                batchBytes),
-				                                    SERVER_KNOBS->COMMIT_PROXY_LIVENESS_TIMEOUT),
-				                       timed_out(),
-				                       failed_to_progress()),
-				        Void(),
-				        commitData.committedBatches);
+				    commitBatch(&commitData,
+				                const_cast<std::vector<CommitTransactionRequest>*>(&batchedRequests.first),
+				                batchBytes);
+
 				addActor.send(lastCommitComplete);
-			} else
-				commitData.committedBatches.send(Void());
+			}
 		}
 		when(ProxySnapRequest snapReq = waitNext(proxy.proxySnapReq.getFuture())) {
 			TraceEvent(SevDebug, "SnapMasterEnqueue").log();
@@ -3250,7 +3086,6 @@ ACTOR Future<Void> commitProxyServer(CommitProxyInterface proxy,
 		                                                req.recoveryTransactionVersion,
 		                                                req.firstProxy,
 		                                                whitelistBinPaths,
-		                                                req.encryptMode,
 		                                                proxy.provisional,
 		                                                req.commitProxyIndex);
 		wait(core || updateLocalDbInfo(db, localDb, req.recoveryCount, proxy));

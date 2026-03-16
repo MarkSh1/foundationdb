@@ -41,7 +41,6 @@
 #include "fdbrpc/MultiInterface.h"
 #include "fdbclient/ClientWorkerInterface.h"
 #include "fdbserver/RecoveryState.h"
-#include "fdbserver/ConfigBroadcastInterface.h"
 #include "flow/actorcompiler.h"
 
 struct WorkerInterface {
@@ -401,11 +400,7 @@ struct RegisterWorkerRequest {
 	std::vector<NetworkAddress> incompatiblePeers;
 	ReplyPromise<RegisterWorkerReply> reply;
 	bool degraded;
-	Optional<Version> lastSeenKnobVersion;
-	Optional<ConfigClassSet> knobConfigClassSet;
-	bool requestDbInfo;
 	bool recoveredDiskFiles;
-	ConfigBroadcastInterface configBroadcastInterface;
 	Optional<UID> clusterId;
 
 	RegisterWorkerRequest()
@@ -420,17 +415,12 @@ struct RegisterWorkerRequest {
 	                      Optional<EncryptKeyProxyInterface> ekpInterf,
 	                      Optional<ConsistencyScanInterface> csInterf,
 	                      bool degraded,
-	                      Optional<Version> lastSeenKnobVersion,
-	                      Optional<ConfigClassSet> knobConfigClassSet,
 	                      bool recoveredDiskFiles,
-	                      ConfigBroadcastInterface configBroadcastInterface,
 	                      Optional<UID> clusterId)
 	  : wi(wi), initialClass(initialClass), processClass(processClass), priorityInfo(priorityInfo),
 	    generation(generation), distributorInterf(ddInterf), ratekeeperInterf(rkInterf),
 	    encryptKeyProxyInterf(ekpInterf), consistencyScanInterf(csInterf), degraded(degraded),
-	    lastSeenKnobVersion(lastSeenKnobVersion), knobConfigClassSet(knobConfigClassSet), requestDbInfo(false),
-	    recoveredDiskFiles(recoveredDiskFiles), configBroadcastInterface(configBroadcastInterface),
-	    clusterId(clusterId) {}
+	    recoveredDiskFiles(recoveredDiskFiles), clusterId(clusterId) {}
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -448,11 +438,7 @@ struct RegisterWorkerRequest {
 		           incompatiblePeers,
 		           reply,
 		           degraded,
-		           lastSeenKnobVersion,
-		           knobConfigClassSet,
-		           requestDbInfo,
 		           recoveredDiskFiles,
-		           configBroadcastInterface,
 		           clusterId);
 	}
 };
@@ -536,7 +522,7 @@ struct GetEncryptionAtRestModeResponse {
 	constexpr static FileIdentifier file_identifier = 2932156;
 	uint32_t mode;
 
-	GetEncryptionAtRestModeResponse() : mode(EncryptionAtRestMode::Mode::DISABLED) {}
+	GetEncryptionAtRestModeResponse() : mode(EncryptionAtRestModeDeprecated::Mode::DISABLED) {}
 	GetEncryptionAtRestModeResponse(uint32_t m) : mode(m) {}
 
 	template <class Ar>
@@ -713,7 +699,7 @@ struct InitializeCommitProxyRequest {
 	Version recoveryTransactionVersion;
 	bool firstProxy;
 	ReplyPromise<CommitProxyInterface> reply;
-	EncryptionAtRestMode encryptMode;
+	EncryptionAtRestModeDeprecated encryptMode;
 	uint16_t commitProxyIndex;
 
 	template <class Ar>
@@ -798,7 +784,7 @@ struct InitializeResolverRequest {
 	int resolverCount;
 	UID masterId; // master's UID
 	ReplyPromise<ResolverInterface> reply;
-	EncryptionAtRestMode encryptMode;
+	EncryptionAtRestModeDeprecated encryptMode;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -827,7 +813,7 @@ struct InitializeStorageRequest {
 	    tssPairIDAndVersion; // Only set if recruiting a tss. Will be the UID and Version of its SS pair.
 	Version initialClusterVersion;
 	ReplyPromise<InitializeStorageReply> reply;
-	EncryptionAtRestMode encryptMode;
+	EncryptionAtRestModeDeprecated encryptMode;
 
 	template <class Ar>
 	void serialize(Ar& ar) {
@@ -841,7 +827,7 @@ struct InitializeEncryptKeyProxyRequest {
 	UID reqId;
 	UID interfaceId;
 	ReplyPromise<EncryptKeyProxyInterface> reply;
-	EncryptionAtRestMode encryptMode;
+	EncryptionAtRestModeDeprecated encryptMode;
 
 	InitializeEncryptKeyProxyRequest() {}
 	explicit InitializeEncryptKeyProxyRequest(UID uid) : reqId(uid) {}
@@ -1013,7 +999,6 @@ struct Role {
 	static const Role LOG_ROUTER;
 	static const Role DATA_DISTRIBUTOR;
 	static const Role RATEKEEPER;
-	static const Role STORAGE_CACHE;
 	static const Role COORDINATOR;
 	static const Role BACKUP;
 	static const Role ENCRYPT_KEY_PROXY;
@@ -1099,16 +1084,12 @@ ACTOR Future<Void> fdbd(Reference<IClusterConnectionRecord> ccr,
                         std::string metricsPrefix,
                         int64_t memoryProfilingThreshold,
                         std::string whitelistBinPaths,
-                        std::string configPath,
-                        std::map<std::string, std::string> manualKnobOverrides,
-                        ConfigDBType configDBType,
                         bool consistencyCheckUrgentMode);
 
 ACTOR Future<Void> clusterController(Reference<IClusterConnectionRecord> ccr,
                                      Reference<AsyncVar<Optional<ClusterControllerFullInterface>>> currentCC,
                                      Reference<AsyncVar<ClusterControllerPriorityInfo>> asyncPriorityInfo,
                                      LocalityData locality,
-                                     ConfigDBType configDBType,
                                      Reference<AsyncVar<Optional<UID>>> clusterId);
 
 // These servers are started by workerServer
@@ -1118,7 +1099,7 @@ class IDiskQueue;
 
 ACTOR Future<Void> encryptKeyProxyServer(EncryptKeyProxyInterface ei,
                                          Reference<AsyncVar<ServerDBInfo>> db,
-                                         EncryptionAtRestMode encryptMode);
+                                         EncryptionAtRestModeDeprecated encryptMode);
 
 ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
                                  StorageServerInterface ssi,
@@ -1127,16 +1108,15 @@ ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
                                  Version tssSeedVersion,
                                  ReplyPromise<InitializeStorageReply> recruitReply,
                                  Reference<AsyncVar<ServerDBInfo> const> db,
+                                 std::string folder);
+
+ACTOR Future<Void> storageServer(IKeyValueStore* persistentData,
+                                 StorageServerInterface ssi,
+                                 Reference<AsyncVar<ServerDBInfo> const> db,
                                  std::string folder,
-                                 Reference<GetEncryptCipherKeysMonitor> encryptionMonitor);
-ACTOR Future<Void> storageServer(
-    IKeyValueStore* persistentData,
-    StorageServerInterface ssi,
-    Reference<AsyncVar<ServerDBInfo> const> db,
-    std::string folder,
-    Promise<Void> recovered,
-    Reference<IClusterConnectionRecord> connRecord,
-    Reference<GetEncryptCipherKeysMonitor> encryptionMonitor); // changes pssi->id() to be the recovered ID
+                                 Promise<Void> recovered,
+                                 Reference<IClusterConnectionRecord> connRecord);
+
 ACTOR Future<Void> masterServer(MasterInterface mi,
                                 Reference<AsyncVar<ServerDBInfo> const> db,
                                 Reference<AsyncVar<Optional<ClusterControllerFullInterface>> const> ccInterface,
@@ -1176,9 +1156,6 @@ Future<Void> dataDistributor(DataDistributorInterface ddi,
 ACTOR Future<Void> ratekeeper(RatekeeperInterface rki, Reference<AsyncVar<ServerDBInfo> const> db);
 ACTOR Future<Void> consistencyScan(ConsistencyScanInterface csInterf, Reference<AsyncVar<ServerDBInfo> const> dbInfo);
 
-ACTOR Future<Void> storageCacheServer(StorageServerInterface interf,
-                                      uint16_t id,
-                                      Reference<AsyncVar<ServerDBInfo> const> db);
 ACTOR Future<Void> backupWorker(BackupInterface bi,
                                 InitializeBackupRequest req,
                                 Reference<AsyncVar<ServerDBInfo> const> db);

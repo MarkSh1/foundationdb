@@ -72,9 +72,9 @@ thread_local bool ISimulator::isMainThread = false;
 
 ISimulator::ISimulator()
   : desiredCoordinators(1), physicalDatacenters(1), processesPerMachine(0), listenersPerProcess(1), usableRegions(1),
-    allowLogSetKills(true), tssMode(TSSMode::Disabled), configDBType(ConfigDBType::DISABLED), isStopped(false),
-    lastConnectionFailure(0), connectionFailuresDisableDuration(0), speedUpSimulation(false),
-    connectionFailureEnableTime(0), disableTLogRecoveryFinish(false), backupAgents(BackupAgentType::WaitForType),
+    allowLogSetKills(true), tssMode(TSSMode::Disabled), isStopped(false), lastConnectionFailure(0),
+    connectionFailuresDisableDuration(0), speedUpSimulation(false), connectionFailureEnableTime(0),
+    disableTLogRecoveryFinish(false), backupAgents(BackupAgentType::WaitForType),
     drAgents(BackupAgentType::WaitForType), allSwapsDisabled(false) {}
 ISimulator::~ISimulator() = default;
 
@@ -112,29 +112,6 @@ bool simulator_should_inject_fault(const char* context, const char* file, int li
 			}
 			return true;
 		}
-	}
-
-	return false;
-}
-
-bool simulator_should_inject_blob_fault(const char* context, const char* file, int line, int error_code) {
-	if (!g_network->isSimulated() || !faultInjectionActivated)
-		return false;
-
-	auto p = g_simulator->getCurrentProcess();
-
-	if (!g_simulator->speedUpSimulation && deterministicRandom()->random01() < p->blob_inject_failure_rate) {
-		CODE_PROBE(true, "A blob fault was injected", probe::assert::simOnly, probe::context::sim2);
-		CODE_PROBE(error_code == error_code_http_request_failed,
-		           "A failed http request was injected",
-		           probe::assert::simOnly,
-		           probe::context::sim2);
-		TraceEvent("BlobFaultInjected")
-		    .detail("Context", context)
-		    .detail("File", file)
-		    .detail("Line", line)
-		    .detail("ErrorCode", error_code);
-		return true;
 	}
 
 	return false;
@@ -2396,18 +2373,6 @@ public:
 	void reconnectPair(const IPAddress& from, const IPAddress& to) override {
 		TraceEvent("ReconnectPair").detail("From", from).detail("To", to);
 		g_clogging.reconnectPair(from, to);
-	}
-
-	void processInjectBlobFault(ProcessInfo* machine, double failureRate) override {
-		CODE_PROBE(true, "Simulated process beginning blob fault", probe::context::sim2, probe::assert::simOnly);
-		should_inject_blob_fault = simulator_should_inject_blob_fault;
-		ASSERT(machine->blob_inject_failure_rate == 0.0);
-		machine->blob_inject_failure_rate = failureRate;
-	}
-
-	void processStopInjectBlobFault(ProcessInfo* machine) override {
-		CODE_PROBE(true, "Simulated process stopping blob fault", probe::context::sim2, probe::assert::simOnly);
-		machine->blob_inject_failure_rate = 0.0;
 	}
 
 	std::vector<ProcessInfo*> getAllProcesses() const override {

@@ -184,21 +184,6 @@ std::map<std::string, std::string> configForToken(std::string const& mode) {
 			out[p + key] = format("%d", type);
 		}
 
-		if (key == "encryption_at_rest_mode") {
-			EncryptionAtRestMode mode;
-			if (value == "disabled") {
-				mode = EncryptionAtRestMode::DISABLED;
-			} else if (value == "domain_aware") {
-				mode = EncryptionAtRestMode::DOMAIN_AWARE;
-			} else if (value == "cluster_aware") {
-				mode = EncryptionAtRestMode::CLUSTER_AWARE;
-			} else {
-				printf("Error: Only disabled|domain_aware|cluster_aware are valid for encryption_at_rest_mode.\n");
-				return out;
-			}
-			out[p + key] = format("%d", mode);
-		}
-
 		if (key == "exclude") {
 			int p = 0;
 			while (p < value.size()) {
@@ -929,32 +914,6 @@ ACTOR Future<Optional<ClusterConnectionString>> getClusterConnectionStringFromSt
 	}
 }
 
-ACTOR Future<Void> verifyConfigurationDatabaseAlive(Database cx) {
-	state Backoff backoff;
-	state Reference<ISingleThreadTransaction> configTr;
-	loop {
-		try {
-			// Attempt to read a random value from the configuration
-			// database to make sure it is online.
-			configTr = ISingleThreadTransaction::create(ISingleThreadTransaction::Type::PAXOS_CONFIG, cx);
-			Tuple tuple;
-			tuple.appendNull(); // config class
-			tuple << "test"_sr;
-			Optional<Value> serializedValue = wait(configTr->get(tuple.pack()));
-			TraceEvent("ChangeQuorumCheckerNewCoordinatorsOnline").log();
-			return Void();
-		} catch (Error& e) {
-			TraceEvent("ChangeQuorumCheckerNewCoordinatorsError").error(e);
-			if (e.code() == error_code_coordinators_changed) {
-				wait(backoff.onError());
-				configTr->reset();
-			} else {
-				wait(configTr->onError(e));
-			}
-		}
-	}
-}
-
 ACTOR Future<Void> resetPreviousCoordinatorsKey(Database cx) {
 	loop {
 		// When the change coordinators transaction succeeds, it uses the
@@ -962,8 +921,7 @@ ACTOR Future<Void> resetPreviousCoordinatorsKey(Database cx) {
 		// This causes the underlying transaction to not be committed. In order
 		// to make sure we clear the previous coordinators key, we have to use
 		// a new transaction here.
-		state Reference<ISingleThreadTransaction> clearTr =
-		    ISingleThreadTransaction::create(ISingleThreadTransaction::Type::RYW, cx);
+		state Reference<ReadYourWritesTransaction> clearTr = makeReference<ReadYourWritesTransaction>(cx);
 		try {
 			clearTr->setOption(FDBTransactionOptions::ACCESS_SYSTEM_KEYS);
 			clearTr->clear(previousCoordinatorsKey);
@@ -979,8 +937,7 @@ ACTOR Future<Void> resetPreviousCoordinatorsKey(Database cx) {
 
 ACTOR Future<Optional<CoordinatorsResult>> changeQuorumChecker(Transaction* tr,
                                                                ClusterConnectionString* conn,
-                                                               std::string newName,
-                                                               bool disableConfigDB) {
+                                                               std::string newName) {
 	TraceEvent("ChangeQuorumCheckerStart").detail("NewConnectionString", conn->toString());
 	state Optional<ClusterConnectionString> clusterConnectionStringOptional =
 	    wait(getClusterConnectionStringFromStorageServer(tr));
@@ -1013,18 +970,10 @@ ACTOR Future<Optional<CoordinatorsResult>> changeQuorumChecker(Transaction* tr,
 	std::sort(old.coords.begin(), old.coords.end());
 	if (conn->hostnames == old.hostnames && conn->coords == old.coords && old.clusterKeyName() == newName) {
 		connectionStrings.clear();
-		if (g_network->isSimulated() && g_simulator->configDBType == ConfigDBType::DISABLED) {
-			disableConfigDB = true;
-		}
-		if (!disableConfigDB) {
-			wait(verifyConfigurationDatabaseAlive(tr->getDatabase()));
-		}
 		if (BUGGIFY_WITH_PROB(0.1)) {
 			// Introduce a random delay in simulation to allow processes to be
-			// killed before previousCoordinatorKeys has been reset. This will
-			// help test scenarios where the previous configuration database
-			// state has been transferred to the new coordinators but the
-			// broadcaster thinks it has not been transferred.
+			// killed before previousCoordinatorKeys has been reset. This helps
+			// exercise coordinator change edge cases around key cleanup.
 			wait(delay(deterministicRandom()->random01() * 10));
 		}
 		wait(resetPreviousCoordinatorsKey(tr->getDatabase()));
@@ -2588,6 +2537,26 @@ ACTOR Future<int> setBulkLoadMode(Database cx, int mode) {
 	}
 }
 
+ACTOR Future<int> getBulkLoadMode(Database cx) {
+	state Transaction tr(cx);
+	loop {
+		try {
+			tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			tr.setOption(FDBTransactionOptions::READ_SYSTEM_KEYS);
+			tr.setOption(FDBTransactionOptions::PRIORITY_SYSTEM_IMMEDIATE);
+			state int oldMode = 0;
+			Optional<Value> oldModeValue = wait(tr.get(bulkLoadModeKey));
+			if (oldModeValue.present()) {
+				BinaryReader rd(oldModeValue.get(), Unversioned());
+				rd >> oldMode;
+			}
+			return oldMode;
+		} catch (Error& e) {
+			wait(tr.onError(e));
+		}
+	}
+}
+
 ACTOR Future<Void> setBulkLoadSubmissionTransaction(Transaction* tr, BulkLoadTaskState bulkLoadTask) {
 	ASSERT(normalKeys.contains(bulkLoadTask.getRange()) &&
 	       (bulkLoadTask.phase == BulkLoadPhase::Submitted ||
@@ -2863,11 +2832,15 @@ ACTOR Future<Void> cancelBulkLoadJob(Database cx, UID jobId) {
 }
 
 // TODO(Zhe): clear bulkload task metadata within the input range
-ACTOR Future<Void> submitBulkLoadJob(Database cx, BulkLoadJobState jobState) {
+ACTOR Future<Void> submitBulkLoadJob(Database cx, BulkLoadJobState jobState, bool lockAware) {
 	ASSERT(jobState.getPhase() == BulkLoadJobPhase::Submitted);
+
 	state Transaction tr(cx);
 	loop {
 		try {
+			if (lockAware) {
+				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			}
 			// There is at most one bulkLoad job or bulkDump job at a time globally
 			Optional<BulkDumpState> aliveBulkDumpJob = wait(getSubmittedBulkDumpJob(&tr));
 			if (aliveBulkDumpJob.present()) {
@@ -2932,13 +2905,16 @@ ACTOR Future<Void> submitBulkLoadJob(Database cx, BulkLoadJobState jobState) {
 	return Void();
 }
 
-ACTOR Future<Optional<BulkLoadJobState>> getRunningBulkLoadJob(Database cx) {
+ACTOR Future<Optional<BulkLoadJobState>> getRunningBulkLoadJob(Database cx, bool lockAware) {
 	state RangeResult rangeResult;
 	state Transaction tr(cx);
 	state Key beginKey = normalKeys.begin;
 	state Key endKey = normalKeys.end;
 	while (beginKey < endKey) {
 		try {
+			if (lockAware) {
+				tr.setOption(FDBTransactionOptions::LOCK_AWARE);
+			}
 			rangeResult.clear();
 			wait(store(rangeResult, krmGetRanges(&tr, bulkLoadJobPrefix, KeyRangeRef(beginKey, endKey))));
 			for (int i = 0; i < rangeResult.size() - 1; i++) {
