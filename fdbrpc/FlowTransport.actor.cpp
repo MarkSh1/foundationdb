@@ -839,9 +839,14 @@ ACTOR Future<Void> connectionKeeper(Reference<Peer> self,
 						when(Reference<IConnection> _conn =
 						         wait(INetworkConnections::net()->connect(self->destination))) {
 							conn = _conn;
-							self->transport->countOutgoingConnHandshakeRequested++;
+							static SimpleCounter<int64_t>* countOutgoingConnectionCreated =
+							    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/OutgoingConnectionCreated");
+							countOutgoingConnectionCreated->increment(1);
 							wait(conn->connectHandshake());
-							self->transport->countOutgoingConnHandshakeComplete++;
+							static SimpleCounter<int64_t>* countOutgoingConnectionHandshakeComplete =
+							    SimpleCounter<int64_t>::makeCounter(
+							        "/Transport/TLS/OutgoingConnectionHandshakeComplete");
+							countOutgoingConnectionHandshakeComplete->increment(1);
 							self->connectLatencies.addSample(now() - self->lastConnectTime);
 							if (FlowTransport::isClient()) {
 								IFailureMonitor::failureMonitor().setStatus(self->destination, FailureStatus(false));
@@ -1527,12 +1532,17 @@ ACTOR static Future<Void> connectionReader(TransportData* transport,
 								    now() + FLOW_KNOBS->CONNECTION_ID_TIMEOUT;
 							}
 							compatible = false;
-							transport->countConnIncompatible++;
+							static SimpleCounter<int64_t>* countConnectionIncompatible =
+							    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/ConnectionIncompatible");
+							countConnectionIncompatible->increment(1);
 							if (!protocolVersion.hasInexpensiveMultiVersionClient()) {
 								if (peer) {
 									peer->protocolVersion->set(protocolVersion);
 								}
-								transport->countConnIncompatibleWithOldClient++;
+								static SimpleCounter<int64_t>* countConnectionIncompatibleWithVeryOldClient =
+								    SimpleCounter<int64_t>::makeCounter(
+								        "/Transport/TLS/ConnectionIncompatibleWithVeryOldClient");
+								countConnectionIncompatibleWithVeryOldClient->increment(1);
 								// Older versions expected us to hang up. It may work even if we don't hang up here, but
 								// it's safer to keep the old behavior.
 								throw incompatible_protocol_version();
@@ -1633,7 +1643,9 @@ ACTOR static Future<Void> connectionIncoming(TransportData* self, Reference<ICon
 	try {
 		self->countConnHandshakeRequested++;
 		wait(conn->acceptHandshake());
-		self->countConnHandshakeAccepted++;
+		static SimpleCounter<int64_t>* countIncomingConnectionHandshakeAccepted =
+		    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/IncomingConnectionHandshakeAccepted");
+		countIncomingConnectionHandshakeAccepted->increment(1);
 		state Promise<Reference<Peer>> onConnected;
 		state Future<Void> reader = connectionReader(self, conn, Reference<Peer>(), onConnected);
 		if (FLOW_KNOBS->LOG_CONNECTION_ATTEMPTS_ENABLED) {
@@ -1650,17 +1662,24 @@ ACTOR static Future<Void> connectionIncoming(TransportData* self, Reference<ICon
 			}
 			when(wait(delayJittered(FLOW_KNOBS->CONNECTION_MONITOR_TIMEOUT))) {
 				CODE_PROBE(true, "Incoming connection timed out");
-				self->countIncomingConnectionTimedout++;
+				static SimpleCounter<int64_t>* countIncomingConnectionTimedout =
+				    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/IncomingConnectionTimedout");
+				countIncomingConnectionTimedout->increment(1);
 				throw timed_out();
 			}
 		}
-		self->countIncomingConnConnected++;
+		static SimpleCounter<int64_t>* countIncomingConnectionConnected =
+		    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/IncomingConnectionConnected");
+		countIncomingConnectionConnected->increment(1);
 	} catch (Error& e) {
 		if (e.code() != error_code_actor_cancelled) {
 			TraceEvent("IncomingConnectionError", conn->getDebugID())
 			    .errorUnsuppressed(e)
 			    .suppressFor(1.0)
 			    .detail("FromAddress", conn->getPeerAddress());
+			static SimpleCounter<int64_t>* countIncomingConnectionFailed =
+			    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/IncomingConnectionFailed");
+			countIncomingConnectionFailed->increment(1);
 			if (FLOW_KNOBS->LOG_CONNECTION_ATTEMPTS_ENABLED) {
 				entry.failed = true;
 				self->connectionHistory.push_back(entry);
@@ -1687,7 +1706,9 @@ ACTOR static Future<Void> listen(TransportData* self, NetworkAddress listenAddr)
 		loop {
 			self->countIncomingConnRequested++;
 			Reference<IConnection> conn = wait(listener->accept());
-			self->countIncomingConnAccepted++;
+			static SimpleCounter<int64_t>* countIncomingConnectionCreated =
+			    SimpleCounter<int64_t>::makeCounter("/Transport/TLS/IncomingConnectionCreated");
+			countIncomingConnectionCreated->increment(1);
 			if (conn) {
 				TraceEvent("ConnectionFrom", conn->getDebugID())
 				    .suppressFor(1.0)
