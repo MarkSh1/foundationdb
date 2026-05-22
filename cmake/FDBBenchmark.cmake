@@ -47,6 +47,12 @@ function(fdb_setup_googlebenchmark)
       message(FATAL_ERROR "Build step for Benchmark has Failed. ${results}")
     endif()
 
+    if(CMAKE_THREAD_LIBS_INIT)
+      list(APPEND BENCHMARK_CXX_LIBRARIES ${CMAKE_THREAD_LIBS_INIT})
+    elseif(UNIX)
+      list(APPEND BENCHMARK_CXX_LIBRARIES -pthread)
+    endif()
+
     set(BENCHMARK_ENABLE_TESTING OFF)
     add_subdirectory(
       ${googlebenchmark_root}/googlebenchmark-src
