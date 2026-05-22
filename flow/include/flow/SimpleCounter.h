@@ -44,15 +44,10 @@
 // synchronous work in side threads, but is intended to generally be very
 // light weight.  `makeCounter` can be called in constructors of global objects.
 //
-// If you want to use hierarchical metric names (e.g., '/'-separated
-// components), please use ALL LOWER CASE METRIC NAMES AS PER THE EXAMPLE ABOVE.
-// This enables the implementation to smuggle path component
-// separators into the trace output by replacing path separaters like '/' with
-// carefully chosen capital letters.  This obtains compatibility with current FDB
-// "field name" naming conventions.
-//
+// Hierarchical counter names with '/' separaters are encouraged.
 // In the future we might replace '/' with '_' to obtain Prometheus-compatible
-// metric names that don't actually look terrible.
+// metric names that don't actually look terrible. For now software does this
+// conversion on back-end TraceEvent generation.
 //
 // If you don't want to use hierarchical metric names, then your counter
 // names should be ReallyVerboseConcatenatedNamesWithCaps and must be globally
@@ -79,7 +74,7 @@ class SimpleCounter {
 	static_assert(std::is_same_v<T, int64_t> || std::is_same_v<T, double>, "T must be int64_t or double");
 
 private:
-	SimpleCounter(std::string_view n) : value(T(0)), name_(n) {}
+	explicit SimpleCounter(std::string_view n) : value(T(0)), name_(n) {}
 
 	// Not copyable or movable.
 	SimpleCounter(const SimpleCounter&) = delete;

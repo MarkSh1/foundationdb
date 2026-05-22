@@ -30,7 +30,7 @@ namespace {
 
 class ClientReportGenerator {
 public:
-	ClientReportGenerator(DatabaseContext& cx) : cx(cx), healthy(true), numConnectionsFailed(0) {}
+	explicit ClientReportGenerator(DatabaseContext& cx) : cx(cx), healthy(true), numConnectionsFailed(0) {}
 
 	Standalone<StringRef> generateReport() {
 		if (cx.isError()) {
@@ -89,7 +89,7 @@ private:
 		statusObj["CommitProxies"] = commitProxyArr;
 
 		// Update health status
-		if (clientInfo.grvProxies.size() == 0 || clientInfo.commitProxies.size() == 0) {
+		if (clientInfo.grvProxies.empty() || clientInfo.commitProxies.empty()) {
 			healthy = false;
 		}
 	}

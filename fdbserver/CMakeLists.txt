@@ -1,11 +1,20 @@
 fdb_find_sources(FDBSERVER_SRCS)
+list(FILTER FDBSERVER_SRCS EXCLUDE REGEX "^workloads/")
+include(AddFdbServerLinkTest)
 
-if(${COROUTINE_IMPL} STREQUAL libcoro)
-  list(APPEND FDBSERVER_SRCS coroimpl/CoroFlowCoro.actor.cpp)
-else()
-  list(APPEND FDBSERVER_SRCS coroimpl/CoroFlow.actor.cpp)
-endif()
+function(configure_fdbserver_common_includes target_name)
+  target_include_directories(${target_name} PRIVATE
+    ${CMAKE_SOURCE_DIR}/bindings/c
+    ${CMAKE_BINARY_DIR}/bindings/c)
+endfunction()
 
+function(configure_fdbserver_target_includes target_name)
+  configure_fdbserver_common_includes(${target_name})
+  target_include_directories(${target_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+  )
+endfunction()
 
 if(WITH_ROCKSDB)
   find_package(LZ4 REQUIRED)
@@ -14,6 +23,27 @@ if(WITH_ROCKSDB)
     find_package(uring REQUIRED)
   endif()
 endif()
+
+add_subdirectory(core)
+add_subdirectory(kvstore)
+add_subdirectory(logsystem)
+add_subdirectory(mocks3)
+add_subdirectory(clustercontroller)
+add_subdirectory(backupworker)
+add_subdirectory(commitproxy)
+add_subdirectory(coordinator)
+add_subdirectory(datadistributor)
+add_subdirectory(consistencyscan)
+add_subdirectory(grvproxy)
+add_subdirectory(logrouter)
+add_subdirectory(ratekeeper)
+add_subdirectory(resolver)
+add_subdirectory(sequencer)
+add_subdirectory(storageserver)
+add_subdirectory(tester)
+add_subdirectory(tlog)
+add_subdirectory(worker)
+add_subdirectory(workloads)
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/workloads)
 
@@ -26,7 +56,6 @@ if (WITH_SWIFT)
   add_definitions(-DWITH_SWIFT)
 
   add_library(fdbserver_swift STATIC
-          masterserver.swift
           swift_fdbserver_cxx_swift_value_conformance.swift
           swift_fdbserver_collections.swift
           swift_fdbserver_stream_support.swift
@@ -120,18 +149,40 @@ if (WITH_SWIFT)
   # Generate the module map for FDBServer.
   include(GenerateModulemap)
   set(FDBSERVER_BINARY_DIR "${CMAKE_BINARY_DIR}/fdbserver")
+  get_target_property(FDBSERVER_MODULE_HEADERS fdbserver HEADER_FILES)
+  if(NOT FDBSERVER_MODULE_HEADERS)
+    set(FDBSERVER_MODULE_HEADERS "")
+  endif()
   generate_modulemap("${CMAKE_BINARY_DIR}/fdbserver/include" "FDBServer" fdbserver
+     HEADERS ${FDBSERVER_MODULE_HEADERS}
      OMIT
      ArtMutationBuffer.h # actually a textual include
      art_impl.h # actually a textual include
   )
 endif()
 
-target_include_directories(fdbserver PRIVATE
-  ${CMAKE_SOURCE_DIR}/bindings/c
-  ${CMAKE_BINARY_DIR}/bindings/c
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_BINARY_DIR}/include)
+configure_fdbserver_target_includes(fdbserver)
+target_link_libraries(fdbserver PRIVATE
+  fdbserver_mocks3
+  "$<LINK_LIBRARY:WHOLE_ARCHIVE,fdbserver_workloads>"
+  fdbserver_worker
+  fdbserver_backupworker
+  fdbserver_clustercontroller
+  fdbserver_commitproxy
+  fdbserver_consistencyscan
+  fdbserver_coordinator
+  fdbserver_datadistributor
+  fdbserver_grvproxy
+  fdbserver_kvstore
+  fdbserver_logrouter
+  fdbserver_logsystem
+  fdbserver_ratekeeper
+  fdbserver_resolver
+  fdbserver_sequencer
+  fdbserver_storageserver
+  fdbserver_tester
+  fdbserver_tlog
+  fdbserver_core)
 if (WITH_ROCKSDB)
   add_dependencies(fdbserver rocksdb)
   if(WITH_LIBURING)
@@ -151,7 +202,7 @@ if(USE_JEMALLOC)
   target_link_libraries(fdbserver PRIVATE jemalloc::jemalloc)
 endif()
 
-target_link_libraries(fdbserver PRIVATE toml11_target rapidjson)
+target_link_libraries(fdbserver PRIVATE toml11::toml11 rapidjson)
 if(WITH_ROCKSDB)
   target_compile_definitions(fdbserver PRIVATE WITH_ROCKSDB)
 endif()

@@ -58,10 +58,10 @@ double ratePolicy(Reference<LocalitySet>& localitySet,
 		int largestMode = 0;
 		LocalityEntry largestEntry;
 
-		for (auto& counterItem : counterMap) {
-			if (counterItem.second > largestMode) {
-				largestMode = counterItem.second;
-				largestEntry = counterItem.first;
+		for (const auto& [entry, entryCount] : counterMap) {
+			if (entryCount > largestMode) {
+				largestMode = entryCount;
+				largestEntry = entry;
 			}
 		}
 		rating = (double)largestMode / (double)uniqueResults;
@@ -90,8 +90,8 @@ int mostUsedZoneCount(Reference<LocalitySet>& logServerSet, std::vector<Locality
 		entries[value.get()]++;
 	}
 	int maxEntries = 0;
-	for (auto it : entries) {
-		maxEntries = std::max(maxEntries, it.second);
+	for (const auto& [_zoneId, entryCount] : entries) {
+		maxEntries = std::max(maxEntries, entryCount);
 	}
 	return maxEntries;
 }
@@ -121,15 +121,15 @@ bool findBestPolicySetSimple(int targetUniqueValueCount,
 	ASSERT_WE_THINK(uniqueValueCount == entries.size());
 	std::vector<std::vector<int>> randomizedEntries;
 	randomizedEntries.resize(entries.size());
-	for (auto it : entries) {
-		randomizedEntries.push_back(it.second);
+	for (const auto& [_zoneId, entryIndexes] : entries) {
+		randomizedEntries.push_back(entryIndexes);
 	}
 	deterministicRandom()->randomShuffle(randomizedEntries);
 
 	desired = std::max(desired, targetUniqueValueCount);
 	auto it = randomizedEntries.begin();
 	while (bestSet.size() < desired) {
-		if (it->size()) {
+		if (!it->empty()) {
 			bestSet.push_back(mutableEntries[it->back()]);
 			it->pop_back();
 		}
@@ -238,7 +238,7 @@ bool findBestPolicySet(std::vector<LocalityEntry>& bestResults,
 				break;
 		}
 	} else if (policy->name() == "Across") {
-		PolicyAcross* pa = (PolicyAcross*)policy.getPtr();
+		auto* pa = (PolicyAcross*)policy.getPtr();
 		std::set<std::string> attributeKeys;
 		pa->attributeKeys(&attributeKeys);
 		if (pa->embeddedPolicyName() == "One" && attributeKeys.size() == 1 &&
@@ -375,8 +375,8 @@ bool validateAllCombinations(std::vector<LocalityData>& offendingCombo,
 		bValid = false;
 	} else {
 		bool bIsValidGroup;
-		Reference<LocalitySet> localSet = Reference<LocalitySet>(new LocalityGroup());
-		LocalityGroup* localGroup = (LocalityGroup*)localSet.getPtr();
+		Reference<LocalitySet> localSet = makeReference<LocalityGroup>();
+		auto* localGroup = (LocalityGroup*)localSet.getPtr();
 		localGroup->deep_copy(localitySet);
 
 		std::vector<LocalityEntry> localityGroupEntries = localGroup->getEntries();
@@ -405,7 +405,7 @@ bool validateAllCombinations(std::vector<LocalityData>& offendingCombo,
 			bool result = localSet->selectReplicas(policy, localityGroupEntries, resultEntries);
 			ASSERT(result);
 
-			bIsValidGroup = resultEntries.size() == 0;
+			bIsValidGroup = resultEntries.empty();
 
 			if (((bCheckIfValid) && (!bIsValidGroup)) || ((!bCheckIfValid) && (bIsValidGroup))) {
 				offendingCombo.reserve(nCombinationSize);
@@ -460,7 +460,7 @@ Reference<LocalitySet> createTestLocalityMap(std::vector<repTestType>& indexes,
                                              int independentItems,
                                              int independentTotal) {
 	Reference<LocalitySet> buildServer(new LocalityMap<repTestType>());
-	LocalityMap<repTestType>* serverMap = (LocalityMap<repTestType>*)buildServer.getPtr();
+	auto* serverMap = (LocalityMap<repTestType>*)buildServer.getPtr();
 	int serverValue;
 	std::string dcText, szText, rackText, slotText, independentName, independentText;
 
@@ -552,7 +552,7 @@ bool testPolicy(Reference<LocalitySet> servers,
                 Reference<IReplicationPolicy> const& policy,
                 std::vector<LocalityEntry> const& including,
                 bool validate) {
-	LocalityMap<repTestType>* serverMap = (LocalityMap<repTestType>*)servers.getPtr();
+	auto* serverMap = (LocalityMap<repTestType>*)servers.getPtr();
 	std::string outputText, includeText;
 	std::vector<LocalityEntry> entryResults;
 	std::vector<repTestType*> results;
@@ -592,14 +592,14 @@ bool testPolicy(Reference<LocalitySet> servers,
 	valid = (validate) ? policy->validateFull(solved, entryResults, including, servers) : true;
 
 	if (g_replicationdebug > 0) {
-		if (including.size()) {
+		if (!including.empty()) {
 			includeText = " with ";
 			for (auto& entry : including) {
 				includeText += " " + servers->getEntryInfo(entry);
 			}
 		}
 
-		if (results.size()) {
+		if (!results.empty()) {
 			outputText = policy->info() + includeText + " -> ";
 			int count = 0;
 			for (auto& entry : entryResults) {
@@ -626,153 +626,98 @@ std::vector<Reference<IReplicationPolicy>> const& getStaticPolicies() {
 	if (staticPolicies.empty()) {
 		staticPolicies = {
 
-			Reference<IReplicationPolicy>(new PolicyOne()),
+			makeReference<PolicyOne>(),
 
 			// 1 'dc^2 x 1'
-			Reference<IReplicationPolicy>(new PolicyAcross(2, "dc", Reference<IReplicationPolicy>(new PolicyOne()))),
+			makeReference<PolicyAcross>(2, "dc", makeReference<PolicyOne>()),
 
 			// 2 'dc^3 x 1'
-			Reference<IReplicationPolicy>(new PolicyAcross(3, "dc", Reference<IReplicationPolicy>(new PolicyOne()))),
+			makeReference<PolicyAcross>(3, "dc", makeReference<PolicyOne>()),
 
 			// 3 'sz^3 x 1'
-			Reference<IReplicationPolicy>(new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
+			makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>()),
 
 			// 4 'dc^1 x az^3 x 1'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(1,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(3, "az", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(1, "dc", makeReference<PolicyAcross>(3, "az", makeReference<PolicyOne>())),
 
 			// 5 '(sz^3 x rack^2 x 1) + (dc^2 x az^3 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(3,
-			                                         "sz",
-			                                         Reference<IReplicationPolicy>(new PolicyAcross(
-			                                             2, "rack", Reference<IReplicationPolicy>(new PolicyOne()))))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        2,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            3, "az", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(
+			                        3, "sz", makeReference<PolicyAcross>(2, "rack", makeReference<PolicyOne>())),
+			                    makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(3, "az", makeReference<PolicyOne>())) })),
 
 			// 6 '(sz^1 x 1)'
-			Reference<IReplicationPolicy>(new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
+			makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
 
 			// 7 '(sz^1 x 1) + (sz^1 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()) })),
 
 			// 8 '(sz^2 x 1) + (sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()) })),
 
 			// 9 '(dc^1 x sz^2 x 1)'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(1,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(1, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())),
 
 			// 10 '(dc^2 x sz^2 x 1)'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(2,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(2, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())),
 
 			// 11 '(dc^1 x sz^2 x 1) + (dc^2 x sz^2 x 1)'
-			Reference<IReplicationPolicy>(new PolicyAnd(
-			    { Reference<IReplicationPolicy>(
-			          new PolicyAcross(1,
-			                           "dc",
-			                           Reference<IReplicationPolicy>(
-			                               new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
-			      Reference<IReplicationPolicy>(
-			          new PolicyAcross(2,
-			                           "dc",
-			                           Reference<IReplicationPolicy>(new PolicyAcross(
-			                               2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			Reference<IReplicationPolicy>(
+			    new PolicyAnd({ makeReference<PolicyAcross>(
+			                        1, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())),
+			                    makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())) })),
 
 			// 12 '(dc^2 x sz^2 x 1) + (dc^1 x sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2,
-			                                         "dc",
-			                                         Reference<IReplicationPolicy>(new PolicyAcross(
-			                                             2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        1,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())),
+			                    makeReference<PolicyAcross>(
+			                        1, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())) })),
 
 			// 13 '(sz^2 x 1) + (dc^1 x sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        1,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(
+			                        1, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())) })),
 
 			// 14 '(sz^2 x 1) + (dc^2 x sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        2,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())) })),
 
 			// 15 '(sz^3 x 1) + (dc^2 x sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        2,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>())) })),
 
 			// 16 '(sz^1 x 1) + (sz^2 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()) })),
 
 			// 17 '(sz^2 x 1) + (sz^3 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>()) })),
 
 			// 18 '(sz^1 x 1) + (sz^2 x 1) + (sz^3 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(2, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(2, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>()) })),
 
 			// 19 '(sz^1 x 1) + (machine^1 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "zoneid", Reference<IReplicationPolicy>(new PolicyOne()))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(1, "zoneid", makeReference<PolicyOne>()) })),
 
 			// '(dc^1 x 1) + (sz^1 x 1) + (machine^1 x 1)'
 			//	Reference<IReplicationPolicy>( new PolicyAnd( { Reference<IReplicationPolicy>(new PolicyAcross(1, "dc",
@@ -781,35 +726,19 @@ std::vector<Reference<IReplicationPolicy>> const& getStaticPolicies() {
 			//"zoneid", Reference<IReplicationPolicy>(new PolicyOne()))) } ) ),
 
 			// 20 '(dc^1 x sz^3 x 1)'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(1,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(1, "dc", makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>())),
 
 			// 21 '(dc^2 x sz^3 x 1)'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(2,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(3, "sz", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(2, "dc", makeReference<PolicyAcross>(3, "sz", makeReference<PolicyOne>())),
 
 			// 22 '(dc^2 x az^3 x 1)'
-			Reference<IReplicationPolicy>(
-			    new PolicyAcross(2,
-			                     "dc",
-			                     Reference<IReplicationPolicy>(
-			                         new PolicyAcross(3, "az", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(2, "dc", makeReference<PolicyAcross>(3, "az", makeReference<PolicyOne>())),
 
 			// 23 '(sz^1 x 1) + (dc^2 x az^3 x 1)'
 			Reference<IReplicationPolicy>(
-			    new PolicyAnd({ Reference<IReplicationPolicy>(
-			                        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne()))),
-			                    Reference<IReplicationPolicy>(new PolicyAcross(
-			                        2,
-			                        "dc",
-			                        Reference<IReplicationPolicy>(new PolicyAcross(
-			                            3, "az", Reference<IReplicationPolicy>(new PolicyOne()))))) })),
+			    new PolicyAnd({ makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()),
+			                    makeReference<PolicyAcross>(
+			                        2, "dc", makeReference<PolicyAcross>(3, "az", makeReference<PolicyOne>())) })),
 
 			// 'dc^1 x (az^2 x 1) + (sz^2 x 1)'
 			//	Reference<IReplicationPolicy>( new PolicyAcross(1, "dc", Reference<IReplicationPolicy>(new
@@ -818,24 +747,16 @@ std::vector<Reference<IReplicationPolicy>> const& getStaticPolicies() {
 			// PolicyOne())))}))) ),
 
 			// 24 Require backtracking
-			Reference<IReplicationPolicy>(new PolicyAcross(
-			    8,
-			    "zoneid",
-			    Reference<IReplicationPolicy>(
-			        new PolicyAcross(1, "az", Reference<IReplicationPolicy>(new PolicyOne()))))),
+			makeReference<PolicyAcross>(8, "zoneid", makeReference<PolicyAcross>(1, "az", makeReference<PolicyOne>())),
 
 			// 25
-			Reference<IReplicationPolicy>(new PolicyAcross(
-			    8,
-			    "zoneid",
-			    Reference<IReplicationPolicy>(
-			        new PolicyAcross(1, "sz", Reference<IReplicationPolicy>(new PolicyOne())))))
+			makeReference<PolicyAcross>(8, "zoneid", makeReference<PolicyAcross>(1, "sz", makeReference<PolicyOne>()))
 		};
 	}
 	return staticPolicies;
 }
 
-Reference<IReplicationPolicy> const randomAcrossPolicy(LocalitySet const& serverSet) {
+Reference<IReplicationPolicy> randomAcrossPolicy(LocalitySet const& serverSet) {
 	int usedKeyTotal, keysUsed, keyIndex, valueTotal, maxValueTotal, maxKeyTotal, skips, lastKeyIndex;
 	std::vector<std::string> keyArray(serverSet.getGroupKeyMap()->_lookuparray);
 	std::set<std::string> valueSet;
@@ -896,7 +817,7 @@ Reference<IReplicationPolicy> const randomAcrossPolicy(LocalitySet const& server
 			valueTotal = deterministicRandom()->randomInt(1, valueSet.size() + 2);
 			if ((valueTotal > maxValueTotal) && (deterministicRandom()->random01() > .25))
 				valueTotal = maxValueTotal;
-			policy = Reference<IReplicationPolicy>(new PolicyAcross(valueTotal, keyText, policy));
+			policy = makeReference<PolicyAcross>(valueTotal, keyText, policy);
 			if (g_replicationdebug > 1) {
 				printf("  item%3d: (%3d =>%3d) %-10s  =>%4d\n",
 				       keysUsed + 1,
@@ -1002,7 +923,7 @@ int testReplication() {
 			alsoSize = maxAlsoSize;
 		}
 
-		if ((!alsoSize) && (alsoServers.size() > 0)) {
+		if ((!alsoSize) && (!alsoServers.empty())) {
 			alsoServers.clear();
 		} else {
 			alsoServers = testServers->getEntries();

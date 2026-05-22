@@ -28,7 +28,7 @@
 #include "flow/BooleanParam.h"
 #include "flow/flow.h"
 #include "flow/WipedString.h"
-#include "flow/TDMetric.actor.h"
+#include "flow/TDMetric.h"
 #include "flow/IRandom.h"
 #include "fdbclient/FDBTypes.h"
 #include "fdbclient/CommitProxyInterface.h"
@@ -110,8 +110,8 @@ public:
 
 	Database() {} // an uninitialized database can be destructed or reassigned safely; that's it
 	void operator=(Database const& rhs) { db = rhs.db; }
-	Database(Database const& rhs) : db(rhs.db) {}
-	Database(Database&& r) noexcept : db(std::move(r.db)) {}
+	explicit(false) Database(Database const& rhs) : db(rhs.db) {}
+	explicit(false) Database(Database&& r) noexcept : db(std::move(r.db)) {}
 	void operator=(Database&& r) noexcept { db = std::move(r.db); }
 
 	// For internal use by the native client:
@@ -175,6 +175,7 @@ struct TransactionOptions {
 	bool rawAccess : 1;
 	bool bypassStorageQuota : 1;
 	bool enableReplicaConsistencyCheck : 1;
+	Optional<int64_t> maxGrvQueueDelayMS;
 	int requiredReplicas;
 
 	TransactionPriority priority;
@@ -184,7 +185,7 @@ struct TransactionOptions {
 
 	// update clear function if you add a new field
 
-	TransactionOptions(Database const& cx);
+	explicit TransactionOptions(Database const& cx);
 	TransactionOptions();
 
 	void reset(Database const& cx);
@@ -199,7 +200,7 @@ struct TransactionLogInfo : public ReferenceCounted<TransactionLogInfo>, NonCopy
 	enum LoggingLocation { DONT_LOG = 0, TRACE_LOG = 1, DATABASE = 2 };
 
 	TransactionLogInfo() : logLocation(DONT_LOG), maxFieldLength(0) {}
-	TransactionLogInfo(LoggingLocation location) : logLocation(location), maxFieldLength(0) {}
+	explicit TransactionLogInfo(LoggingLocation location) : logLocation(location), maxFieldLength(0) {}
 	TransactionLogInfo(std::string id, LoggingLocation location)
 	  : logLocation(location), maxFieldLength(0), identifier(id) {}
 
@@ -245,7 +246,7 @@ struct Watch : public ReferenceCounted<Watch>, NonCopyable {
 	Optional<ReadOptions> readOptions;
 
 	Watch() : valuePresent(false), setPresent(false), watchFuture(Never()) {}
-	Watch(Key key) : key(key), valuePresent(false), setPresent(false), watchFuture(Never()) {}
+	explicit Watch(Key key) : key(key), valuePresent(false), setPresent(false), watchFuture(Never()) {}
 	Watch(Key key, Optional<Value> val)
 	  : key(key), value(val), valuePresent(true), setPresent(false), watchFuture(Never()) {}
 
@@ -268,8 +269,6 @@ struct TransactionState : ReferenceCounted<TransactionState> {
 	// Measured by summing the bytes accessed by each read and write operation
 	// after rounding up to the nearest page size and applying a write penalty
 	int64_t totalCost = 0;
-
-	double proxyTagThrottledDuration = 0.0;
 
 	int numErrors = 0;
 	double startTime = 0;
@@ -543,9 +542,7 @@ Future<Void> Database::run(Fun fun) {
 }
 
 ACTOR Future<Version> waitForCommittedVersion(Database cx, Version version, SpanContext spanContext);
-ACTOR Future<Standalone<VectorRef<DDMetricsRef>>> waitDataDistributionMetricsList(Database cx,
-                                                                                  KeyRange keys,
-                                                                                  int shardLimit);
+Future<Standalone<VectorRef<DDMetricsRef>>> waitDataDistributionMetricsList(Database cx, KeyRange keys, int shardLimit);
 
 int64_t extractIntOption(Optional<StringRef> value,
                          int64_t minValue = std::numeric_limits<int64_t>::min(),
@@ -553,7 +550,7 @@ int64_t extractIntOption(Optional<StringRef> value,
 
 // Takes a snapshot of the cluster, specifically the following persistent
 // states: coordinator, TLog and storage state
-ACTOR Future<Void> snapCreate(Database cx, Standalone<StringRef> snapCmd, UID snapUID);
+Future<Void> snapCreate(Database cx, Standalone<StringRef> snapCmd, UID snapUID);
 
 // Adds necessary mutation(s) to the transaction, so that *one* checkpoint will be created for
 // each and every shards overlapping with `ranges`.
@@ -572,7 +569,7 @@ Future<Void> createCheckpoint(Reference<ReadYourWritesTransaction> tr,
 // Gets checkpoint metadata for `ranges` at the specific version, with the particular format.
 // Returns a list of [range, checkpoint], where the `checkpoint` has data over `range`.
 // checkpoint_not_found() error will be returned if the specific checkpoint cannot be found.
-ACTOR Future<std::vector<std::pair<KeyRange, CheckpointMetaData>>> getCheckpointMetaData(
+Future<std::vector<std::pair<KeyRange, CheckpointMetaData>>> getCheckpointMetaData(
     Database cx,
     std::vector<KeyRange> ranges,
     Version version,
@@ -581,15 +578,15 @@ ACTOR Future<std::vector<std::pair<KeyRange, CheckpointMetaData>>> getCheckpoint
     double timeout = 5.0);
 
 // Checks with Data Distributor that it is safe to mark all servers in exclusions as failed
-ACTOR Future<bool> checkSafeExclusions(Database cx, std::vector<AddressExclusion> exclusions);
+Future<bool> checkSafeExclusions(Database cx, std::vector<AddressExclusion> exclusions);
 
 // Measured in bytes, rounded up to the nearest page size. Multiply by fungibility ratio
 // because writes are more expensive than reads.
 inline uint64_t getWriteOperationCost(uint64_t bytes) {
 	if (bytes == 0) {
-		return CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
+		return CLIENT_KNOBS->TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE;
 	} else {
-		return CLIENT_KNOBS->GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
+		return CLIENT_KNOBS->TAG_THROTTLING_RW_FUNGIBILITY_RATIO * CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE *
 		       ((bytes - 1) / CLIENT_KNOBS->TAG_THROTTLING_PAGE_SIZE + 1);
 	}
 }
@@ -606,11 +603,11 @@ inline uint64_t getReadOperationCost(uint64_t bytes) {
 // Create a transaction to set the value of system key \xff/conf/perpetual_storage_wiggle. If enable == true, the value
 // will be 1. Otherwise, the value will be 0. The caller should take care of the reset of StorageWiggleMetrics if
 // necessary. Returns the FDB version at which the transaction was committed.
-ACTOR Future<Version> setPerpetualStorageWiggle(Database cx, bool enable, LockAware lockAware = LockAware::False);
+Future<Version> setPerpetualStorageWiggle(Database cx, bool enable, LockAware lockAware = LockAware::False);
 
-ACTOR Future<std::vector<std::pair<UID, StorageWiggleValue>>> readStorageWiggleValues(Database cx,
-                                                                                      bool primary,
-                                                                                      bool use_system_priority);
+Future<std::vector<std::pair<UID, StorageWiggleValue>>> readStorageWiggleValues(Database cx,
+                                                                                bool primary,
+                                                                                bool use_system_priority);
 
 // Returns the maximum legal size of a key. This size will be determined by the prefix of the passed in key
 // (system keys have a larger maximum size). This should be used for generic max key size requests.
@@ -629,12 +626,12 @@ int64_t getMaxClearKeySize(KeyRef const& key);
 struct KeyRangeLocationInfo;
 // Return the aggregated StorageMetrics of range keys to the caller. The locations tell which interface should
 // serve the request. The final result is within (min-permittedError/2, max + permittedError/2) if valid.
-ACTOR Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(Version version,
-                                                                      KeyRange keys,
-                                                                      std::vector<KeyRangeLocationInfo> locations,
-                                                                      StorageMetrics min,
-                                                                      StorageMetrics max,
-                                                                      StorageMetrics permittedError);
+Future<Optional<StorageMetrics>> waitStorageMetricsWithLocation(Version version,
+                                                                KeyRange keys,
+                                                                std::vector<KeyRangeLocationInfo> locations,
+                                                                StorageMetrics min,
+                                                                StorageMetrics max,
+                                                                StorageMetrics permittedError);
 
 // Return the suggested split points from storage server.The locations tell which interface should
 // serve the request. `limit` is the current estimated storage metrics of `keys`.The returned points, if present,
@@ -646,19 +643,20 @@ ACTOR Future<Optional<Standalone<VectorRef<KeyRef>>>> splitStorageMetricsWithLoc
     StorageMetrics estimated,
     Optional<int> minSplitBytes);
 
-namespace NativeAPI {
-ACTOR Future<std::vector<std::pair<StorageServerInterface, ProcessClass>>> getServerListAndProcessClasses(
-    Transaction* tr);
-}
-ACTOR Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
-                                                           Key key,
-                                                           SpanContext spanContext,
-                                                           Optional<UID> debugID,
-                                                           UseProvisionalProxies useProvisionalProxies,
-                                                           Reverse isBackward,
-                                                           Version version);
+Future<RangeResult> getWorkerInterfaces(Reference<IClusterConnectionRecord> clusterRecord);
 
-ACTOR Future<Void> refreshTransaction(DatabaseContext* self, Transaction* tr);
+namespace NativeAPI {
+Future<std::vector<std::pair<StorageServerInterface, ProcessClass>>> getServerListAndProcessClasses(Transaction* tr);
+}
+Future<KeyRangeLocationInfo> getKeyLocation_internal(Database cx,
+                                                     Key key,
+                                                     SpanContext spanContext,
+                                                     Optional<UID> debugID,
+                                                     UseProvisionalProxies useProvisionalProxies,
+                                                     Reverse isBackward,
+                                                     Version version);
+
+Future<Void> refreshTransaction(DatabaseContext* self, Transaction* tr);
 
 #include "flow/unactorcompiler.h"
 #endif

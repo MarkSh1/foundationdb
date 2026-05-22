@@ -86,7 +86,7 @@ extern "C" DLLEXPORT fdb_bool_t fdb_error_predicate(int predicate_test, fdb_erro
 		       code == error_code_commit_proxy_memory_limit_exceeded ||
 		       code == error_code_transaction_throttled_hot_shard || code == error_code_batch_transaction_throttled ||
 		       code == error_code_process_behind || code == error_code_tag_throttled ||
-		       code == error_code_proxy_tag_throttled || code == error_code_transaction_rejected_range_locked;
+		       code == error_code_transaction_rejected_range_locked;
 	}
 	return false;
 }
@@ -222,7 +222,7 @@ private:
 extern "C" DLLEXPORT fdb_error_t fdb_future_set_callback(FDBFuture* f,
                                                          void (*callbackf)(FDBFuture*, void*),
                                                          void* userdata) {
-	CAPICallback* cb = new CAPICallback(callbackf, f, userdata);
+	auto* cb = new CAPICallback(callbackf, f, userdata);
 	int ignore;
 	CATCH_AND_RETURN(TSAVB(f)->callOrSetAsCallback(cb, ignore, 0););
 }

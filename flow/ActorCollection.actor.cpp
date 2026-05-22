@@ -29,12 +29,12 @@ struct Runner : public boost::intrusive::list_base_hook<>, FastAllocated<Runner>
 };
 
 // An intrusive list of Runners, which are FastAllocated.  Each runner holds a handler future
-typedef boost::intrusive::list<Runner, boost::intrusive::constant_time_size<false>> RunnerList;
+using RunnerList = boost::intrusive::list<Runner, boost::intrusive::constant_time_size<false>>;
 
 // The runners list in the ActorCollection must be destroyed when the actor is destructed rather
 // than before returning or throwing
 struct RunnerListDestroyer : NonCopyable {
-	RunnerListDestroyer(RunnerList* list) : list(list) {}
+	explicit RunnerListDestroyer(RunnerList* list) : list(list) {}
 
 	~RunnerListDestroyer() {
 		list->clear_and_dispose([](Runner* r) { delete r; });
@@ -161,8 +161,8 @@ TEST_CASE("/flow/actorCollection/testCancel") {
 	return Void();
 }
 
-ACTOR Future<Void> failedActor() {
-	throw operation_failed();
+Future<Void> failedActor() {
+	return operation_failed();
 }
 
 // test contract that even if the actor collection has stopped and new actors are added to the promise stream, they are

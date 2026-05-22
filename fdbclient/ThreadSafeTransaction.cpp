@@ -24,7 +24,7 @@
 #include "fdbclient/ThreadSafeTransaction.h"
 #include "fdbclient/DatabaseContext.h"
 #include "fdbclient/versions.h"
-#include "fdbclient/GenericManagementAPI.actor.h"
+#include "fdbclient/GenericManagementAPI.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "flow/Arena.h"
 #include "flow/ProtocolVersion.h"
@@ -46,12 +46,12 @@ ThreadFuture<Reference<IDatabase>> ThreadSafeDatabase::createFromExistingDatabas
 		db->checkDeferredError();
 		DatabaseContext* cx = db.getPtr();
 		cx->addref();
-		return Future<Reference<IDatabase>>(Reference<IDatabase>(new ThreadSafeDatabase(cx)));
+		return Future<Reference<IDatabase>>(makeReference<ThreadSafeDatabase>(cx));
 	});
 }
 
 Reference<ITransaction> ThreadSafeDatabase::createTransaction() {
-	return Reference<ITransaction>(new ThreadSafeTransaction(db));
+	return makeReference<ThreadSafeTransaction>(db);
 }
 
 void ThreadSafeDatabase::setOption(FDBDatabaseOptions::Option option, Optional<StringRef> value) {
@@ -142,8 +142,8 @@ ThreadSafeDatabase::ThreadSafeDatabase(ConnectionRecordType connectionRecordType
 			Reference<IClusterConnectionRecord> connectionRecord =
 			    connectionRecordType == ConnectionRecordType::FILE
 			        ? Reference<IClusterConnectionRecord>(ClusterConnectionFile::openOrDefault(connectionRecordString))
-			        : Reference<IClusterConnectionRecord>(
-			              new ClusterConnectionMemoryRecord(ClusterConnectionString(connectionRecordString)));
+			        : Reference<IClusterConnectionRecord>(makeReference<ClusterConnectionMemoryRecord>(
+			              ClusterConnectionString(connectionRecordString)));
 
 			Database::createDatabase(connectionRecord, apiVersion, IsInternal::False, LocalityData(), db).extractPtr();
 		} catch (Error& e) {
@@ -592,13 +592,13 @@ void ThreadSafeApi::stopNetwork() {
 }
 
 Reference<IDatabase> ThreadSafeApi::createDatabase(const char* clusterFilePath) {
-	return Reference<IDatabase>(
-	    new ThreadSafeDatabase(ThreadSafeDatabase::ConnectionRecordType::FILE, clusterFilePath, apiVersion.version()));
+	return makeReference<ThreadSafeDatabase>(
+	    ThreadSafeDatabase::ConnectionRecordType::FILE, clusterFilePath, apiVersion.version());
 }
 
 Reference<IDatabase> ThreadSafeApi::createDatabaseFromConnectionString(const char* connectionString) {
-	return Reference<IDatabase>(new ThreadSafeDatabase(
-	    ThreadSafeDatabase::ConnectionRecordType::CONNECTION_STRING, connectionString, apiVersion.version()));
+	return makeReference<ThreadSafeDatabase>(
+	    ThreadSafeDatabase::ConnectionRecordType::CONNECTION_STRING, connectionString, apiVersion.version());
 }
 
 void ThreadSafeApi::addNetworkThreadCompletionHook(void (*hook)(void*), void* hookParameter) {

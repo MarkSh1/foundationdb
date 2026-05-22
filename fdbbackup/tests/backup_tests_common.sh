@@ -19,8 +19,14 @@
 # limitations under the License.
 #
 # Common backup test functions
-# Shared between s3_backup_test.sh, s3_backup_bulkdump_bulkload.sh, dir_backup_test.sh, etc.
+# Shared between blob_backup_restore_test.sh, s3_backup_bulkdump_bulkload.sh, dir_backup_test.sh, etc.
 # These functions work with both S3/blobstore and file-based backup testing
+
+# Source shared test utilities (output_contains, output_matches, etc.)
+_BACKUP_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${_BACKUP_COMMON_DIR}/../../fdbclient/tests/tests_common.sh" ]]; then
+  source "${_BACKUP_COMMON_DIR}/../../fdbclient/tests/tests_common.sh"
+fi
 
 # Helper function to add base arguments (cluster file and logging)
 # Uses bash nameref (requires bash 4.3+) to modify the array in place
@@ -106,7 +112,7 @@ function s3_cleanup_url {
   local local_scratch_dir="${2}"
   local local_url="${3}"
   local credentials="${4}"
-  
+
   local cmd=("${local_build_dir}/bin/s3client")
   cmd+=("${KNOBS[@]}")
   
@@ -151,7 +157,11 @@ function run_backup {
   add_common_optional_args cmd_args "${blob_credentials}" "${backup_mode}" "${local_encryption_key_file}"
 
   if [[ "${USE_PARTITIONED_LOG:-false}" == "true" ]]; then
-    cmd_args+=("--partitioned-log-experimental")
+    cmd_args+=("--mutation-log-type" "partitioned-log-experimental")
+  fi
+
+  if [[ "${USE_ENCRYPTION_BLOCK_SIZE:-false}" == "true" ]]; then
+    cmd_args+=("--encryption-block-size" "4096")
   fi
 
   # Start backup without -w flag to avoid hanging
@@ -182,12 +192,12 @@ function run_backup {
     set -e
     
     # Check if backup is restorable (differential state) or completed
-    if echo "${status_output}" | grep -q "is restorable"; then
+    if output_contains "${status_output}" "is restorable"; then
       log "Backup is now restorable after ${elapsed}s"
       break
     fi
     
-    if echo "${status_output}" | grep -q "completed"; then
+    if output_contains "${status_output}" "completed"; then
       log "Backup completed after ${elapsed}s"
       break
     fi
@@ -196,17 +206,17 @@ function run_backup {
     if [[ $((elapsed % 30)) -eq 0 ]]; then
       log "Still waiting for backup to become restorable (${elapsed}s elapsed)..."
       # Show current state for debugging
-      if echo "${status_output}" | grep -q "is restorable"; then
+      if output_contains "${status_output}" "is restorable"; then
         log "  Status: backup is restorable (should have exited loop)"
-      elif echo "${status_output}" | grep -q "in progress to"; then
+      elif output_contains "${status_output}" "in progress to"; then
         log "  Status: backup running, waiting for snapshot to complete"
-      elif echo "${status_output}" | grep -q "just started"; then
+      elif output_contains "${status_output}" "just started"; then
         log "  Status: backup submitted, tasks starting up"
       fi
       # Check snapshot mode for debugging
-      if echo "${status_output}" | grep -q "Snapshot Mode: bulkdump"; then
+      if output_contains "${status_output}" "Snapshot Mode: bulkdump"; then
         log "  Snapshot Mode: bulkdump (using BulkDump for snapshots)"
-      elif echo "${status_output}" | grep -q "Snapshot Mode: both"; then
+      elif output_contains "${status_output}" "Snapshot Mode: both"; then
         log "  Snapshot Mode: both (generating both formats)"
       fi
     fi
@@ -218,13 +228,48 @@ function run_backup {
     echo "${status_output}"
     return 1
   fi
-  
+
+  # For 'both' or 'bulkdump' mode, wait for BulkDump snapshot to be written
+  # BulkDump writes the snapshot file AFTER DD job completes, which is async from rangefile snapshot
+  if [[ "${backup_mode}" == "both" || "${backup_mode}" == "bulkdump" ]]; then
+    log "Waiting for BulkDump snapshot to be written (mode: ${backup_mode})..."
+    local bulkdump_timeout=120  # Additional timeout for BulkDump
+    local bulkdump_elapsed=0
+    local bulkdump_poll=5
+
+    while [[ $bulkdump_elapsed -lt $bulkdump_timeout ]]; do
+      sleep $bulkdump_poll
+      bulkdump_elapsed=$((bulkdump_elapsed + bulkdump_poll))
+
+      # Check for BulkDump snapshot file with ",bulk" suffix (used in 'both' mode)
+      # or check if any snapshot has bulkDumpJobId field
+      set +e
+      snapshot_list=$("${local_build_dir}"/bin/fdbbackup describe -d "${local_url}" -C "${local_scratch_dir}/loopback_cluster/fdb.cluster" --log --logdir="${local_scratch_dir}" 2>&1)
+      set -e
+
+      # Check if BulkDump snapshot exists (look for bulkDumpJobId in describe output)
+      if output_matches "${snapshot_list}" "bulkDumpJobId\|,bulk"; then
+        log "BulkDump snapshot found after ${bulkdump_elapsed}s"
+        break
+      fi
+
+      if [[ $((bulkdump_elapsed % 30)) -eq 0 ]]; then
+        log "Still waiting for BulkDump snapshot (${bulkdump_elapsed}s elapsed)..."
+      fi
+    done
+
+    if [[ $bulkdump_elapsed -ge $bulkdump_timeout ]]; then
+      log "Warning: Timeout waiting for BulkDump snapshot after ${bulkdump_timeout}s"
+      log "BulkDump may still be running - proceeding anyway"
+    fi
+  fi
+
   # Check if backup already completed (no need to discontinue)
-  if echo "${status_output}" | grep -q "completed"; then
+  if output_contains "${status_output}" "completed"; then
     log "Backup already completed - no need to discontinue"
     return 0
   fi
-  
+
   # Stop the backup to finalize it (only if still running)
   log "Stopping backup to finalize restorable state"
   set +e
@@ -233,7 +278,7 @@ function run_backup {
   set -e
   
   if [[ $stop_exit_code -ne 0 ]]; then
-    if echo "${stop_output}" | grep -q "already discontinued\|not running\|unneeded"; then
+    if output_matches "${stop_output}" "already discontinued\|not running\|unneeded"; then
       log "Backup already completed and finalized - this is success!"
     else
       err "Failed to stop backup: ${stop_output}"
@@ -299,13 +344,13 @@ function run_restore {
     # Check if restore completed
     # Status output contains "State: completed" or "Phase: Complete" when done
     # Also check "No restore" for when restore tag doesn't exist (completed and cleaned up)
-    if echo "${status_output}" | grep -qi "State:.*completed\|Phase:.*Complete\|No restore"; then
+    if output_matches_i "${status_output}" "State:.*completed\|Phase:.*Complete\|No restore"; then
       log "Restore completed after ${elapsed}s"
       return 0
     fi
     
     # Check if restore failed (be specific - "LastError: None" contains "Error" so avoid false positives)
-    if echo "${status_output}" | grep -qi "State:.*aborted"; then
+    if output_matches_i "${status_output}" "State:.*aborted"; then
       err "Restore aborted after ${elapsed}s"
       log "Status output:"
       echo "${status_output}"
@@ -324,7 +369,7 @@ function run_restore {
     if [[ $((elapsed % 30)) -eq 0 ]]; then
       log "Still waiting for restore to complete (${elapsed}s elapsed)..."
       # Show phase info for debugging
-      if echo "${status_output}" | grep -qi "Phase:"; then
+      if output_matches_i "${status_output}" "Phase:"; then
         phase_info=$(echo "${status_output}" | grep -i "Phase:" | head -1)
         log "  ${phase_info}"
       fi
@@ -380,7 +425,9 @@ function test_encryption_mismatches {
 
     if [[ ${exit_code1} -eq 0 ]]; then
       err "Restore without encryption on encrypted backup succeeded when it should have failed!"
-      rm -rf "${mismatch_logdir}"
+      if [[ "${PRESERVE_TEST_DATA:-0}" != "1" ]]; then
+        rm -rf "${mismatch_logdir}"
+      fi
       return 1
     fi
     log "SUCCESS: Restore without encryption on encrypted backup failed as expected (exit code: ${exit_code1})"
@@ -402,7 +449,9 @@ function test_encryption_mismatches {
 
     if [[ ${exit_code2} -eq 0 ]]; then
       err "Restore with wrong encryption key succeeded when it should have failed!"
-      rm -rf "${mismatch_logdir}"
+      if [[ "${PRESERVE_TEST_DATA:-0}" != "1" ]]; then
+        rm -rf "${mismatch_logdir}"
+      fi
       return 1
     fi
     log "SUCCESS: Restore with wrong encryption key failed as expected (exit code: ${exit_code2})"
@@ -428,14 +477,18 @@ function test_encryption_mismatches {
 
     if [[ ${exit_code} -eq 0 ]]; then
       err "Restore with encryption on unencrypted backup succeeded when it should have failed!"
-      rm -rf "${mismatch_logdir}"
+      if [[ "${PRESERVE_TEST_DATA:-0}" != "1" ]]; then
+        rm -rf "${mismatch_logdir}"
+      fi
       return 1
     fi
     log "SUCCESS: Restore with encryption on unencrypted backup failed as expected (exit code: ${exit_code})"
   fi
 
   # Clean up separate log directory
-  rm -rf "${mismatch_logdir}"
+  if [[ "${PRESERVE_TEST_DATA:-0}" != "1" ]]; then
+    rm -rf "${mismatch_logdir}"
+  fi
 
   log "All encryption mismatch tests completed successfully"
   return 0
@@ -461,11 +514,11 @@ function run_restore_wait {
     status_output=$("${local_build_dir}"/bin/fdbrestore status -t "${local_tag}" --dest-cluster-file "${local_scratch_dir}/loopback_cluster/fdb.cluster" --log --logdir="${local_scratch_dir}" 2>&1)
     set -e
     
-    if echo "${status_output}" | grep -qi "State:.*completed\|Phase:.*Complete\|No restore"; then
+    if output_matches_i "${status_output}" "State:.*completed\|Phase:.*Complete\|No restore"; then
       return 0
     fi
     
-    if echo "${status_output}" | grep -qi "State:.*aborted"; then
+    if output_matches_i "${status_output}" "State:.*aborted"; then
       return 1
     fi
     
@@ -485,15 +538,18 @@ function run_restore_wait {
 function setup_backup_test_environment {
   local http_verbose_level="${1}"
   local additional_knobs=("${@:2}")
-  
+
   # Clear proxy environment variables
   unset HTTP_PROXY
   unset HTTPS_PROXY
-  
+
   # Set USE_S3 based on environment
   readonly USE_S3="${USE_S3:-$( if [[ -n "${OKTETO_NAMESPACE+x}" ]]; then echo "true" ; else echo "false"; fi )}"
-  
-  # Set KNOBS based on whether we're using real S3 or MockS3Server
+
+  # Detect GCS from environment variables
+  detect_blobstore_provider
+
+  # Set KNOBS based on which provider we're using
   if [[ "${USE_S3}" == "true" ]]; then
     # Use AWS KMS encryption for real S3
     KNOBS=("--knob_blobstore_encryption_type=aws:kms" "--knob_http_verbose_level=${http_verbose_level}")
@@ -501,13 +557,13 @@ function setup_backup_test_environment {
     # No encryption for MockS3Server
     KNOBS=("--knob_http_verbose_level=${http_verbose_level}")
   fi
-  
+
   # Add any additional knobs (handle empty array when set -u is enabled)
   if [[ ${#additional_knobs[@]} -gt 0 ]]; then
     KNOBS+=("${additional_knobs[@]}")
   fi
   readonly KNOBS
-  
+
   setup_tls_ca_file
 }
 

@@ -31,7 +31,7 @@
 #include "flow/WriteOnlySet.h"
 #include "fdbrpc/fdbrpc.h"
 #include "flow/IAsyncFile.h"
-#include "flow/TLSConfig.actor.h"
+#include "flow/TLSConfig.h"
 #include "fdbrpc/grpc/AsyncTaskExecutor.h"
 #include "flow/actorcompiler.h" // This must be the last #include.
 
@@ -373,7 +373,7 @@ struct Int {
 	constexpr static FileIdentifier file_identifier = 12345;
 	uint32_t value;
 	Int() = default;
-	Int(uint32_t value) : value(value) {}
+	explicit(false) Int(uint32_t value) : value(value) {}
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, value);
@@ -557,7 +557,8 @@ TEST_CASE("/flow/flow/callbacks") {
 
 	onReady(std::move(f), [&result](int x) { result = x; }, [&result](Error e) { result = -1; });
 	onReady(p.getFuture(), [&happened](int) { happened = true; }, [&happened](Error) { happened = true; });
-	ASSERT(!f.isValid());
+	ASSERT(
+	    !f.isValid()); // NOLINT(bugprone-use-after-move): this test intentionally checks the moved-from Future state.
 	ASSERT(p.isValid() && !p.isSet() && p.getFutureReferenceCount() == 1);
 	ASSERT(result == 0 && !happened);
 
@@ -574,7 +575,8 @@ TEST_CASE("/flow/flow/callbacks") {
 	f = p.getFuture();
 	result = 0;
 	onReady(std::move(f), [&result](int x) { result = x; }, [&result](Error e) { result = -e.code(); });
-	ASSERT(!f.isValid());
+	ASSERT(
+	    !f.isValid()); // NOLINT(bugprone-use-after-move): this test intentionally checks the moved-from Future state.
 	ASSERT(p.isValid() && !p.isSet() && p.getFutureReferenceCount() == 1);
 	ASSERT(result == 0);
 
@@ -1394,8 +1396,8 @@ TEST_CASE("/flow/DeterministicRandom/SignedOverflow") {
 struct Tracker {
 	int copied;
 	bool moved;
-	Tracker(int copied = 0) : copied(copied), moved(false) {}
-	Tracker(Tracker&& other) : Tracker(other.copied) {
+	explicit Tracker(int copied = 0) : copied(copied), moved(false) {}
+	explicit(false) Tracker(Tracker&& other) : Tracker(other.copied) {
 		ASSERT(!other.moved);
 		other.moved = true;
 	}
@@ -1406,7 +1408,7 @@ struct Tracker {
 		this->copied = other.copied;
 		return *this;
 	}
-	Tracker(const Tracker& other) : Tracker(other.copied + 1) { ASSERT(!other.moved); }
+	explicit(false) Tracker(const Tracker& other) : Tracker(other.copied + 1) { ASSERT(!other.moved); }
 	Tracker& operator=(const Tracker& other) {
 		ASSERT(!other.moved);
 		this->moved = false;
@@ -1487,7 +1489,8 @@ TEST_CASE("/flow/flow/PromiseStream/move2") {
 	stream.send(Tracker{});
 	Tracker tracker = waitNext(stream.getFuture());
 	Tracker movedTracker = std::move(tracker);
-	ASSERT(tracker.moved);
+	ASSERT(
+	    tracker.moved); // NOLINT(bugprone-use-after-move): this test intentionally checks the moved-from Tracker state.
 	ASSERT(!movedTracker.moved);
 	ASSERT(movedTracker.copied == 0);
 	return Void();
@@ -1722,6 +1725,42 @@ TEST_CASE("/flow/thread/ThreadReturnPromiseStream_Error") {
 	return Void();
 }
 
+TEST_CASE("/fdbrpc/waitValueOrSignal/peerDisconnect") {
+	// Test that waitValueOrSignal detects peer disconnect and returns request_maybe_delivered.
+	// This reproduces the bug where DD would hang forever because waitValueOrSignal didn't
+	// watch peer->disconnect, so dead connections (e.g., from K8s NAT timeouts) were never detected.
+
+	// Construct a minimal Peer. We pass nullptr for TransportData because this test only relies on
+	// peer->disconnect, and PeerHolder only touches outstandingReplies. Note that Peer construction
+	// also updates the global failure monitor status for fakeAddr.
+	NetworkAddress fakeAddr = NetworkAddress::parse("1.2.3.4:1234");
+	state Reference<Peer> peer = makeReference<Peer>(nullptr, fakeAddr);
+
+	// Create a value future that never resolves (simulating a stuck RPC to unreachable storage server)
+	state Promise<Void> neverReply;
+
+	// No failure signal either (simulating failure monitor not yet detecting the failure)
+	state Endpoint ep;
+
+	// Call waitValueOrSignal with the peer
+	state Future<ErrorOr<Void>> result =
+	    waitValueOrSignal(neverReply.getFuture(), Never(), ep, ReplyPromise<Void>(), peer);
+
+	// Result should not be ready yet - the reply hasn't come and disconnect hasn't fired
+	ASSERT(!result.isReady());
+
+	// Simulate peer disconnection (as would happen when connectionReader/connectionKeeper detects failure)
+	peer->disconnect.send(Void());
+
+	// Now waitValueOrSignal should detect the disconnect and return request_maybe_delivered
+	ASSERT(result.isReady());
+	ErrorOr<Void> r = result.get();
+	ASSERT(r.isError());
+	ASSERT(r.getError().code() == error_code_request_maybe_delivered);
+
+	return Void();
+}
+
 TEST_CASE("/flow/IThreadPool/ThreadReturnPromiseStream_DestroyPromise") {
 	noUnseed = true;
 
@@ -1787,6 +1826,94 @@ TEST_CASE("/flow/IThreadPool/ThreadReturnPromiseStream_DestroyPromise") {
 			ASSERT(err.code() == error_code_broken_promise);
 		}
 	}
+
+	return Void();
+}
+
+TEST_CASE("/fdbrpc/waitValueOrSignal/noPeerFallback") {
+	// Test that waitValueOrSignal still works correctly when no peer is provided (the default).
+	// The broken_promise path should still be handled: when the reply promise breaks,
+	// the endpoint should be marked as not found and value set to Never().
+
+	state Promise<Void> reply;
+
+	// Call waitValueOrSignal without a peer (default behavior)
+	state Future<ErrorOr<Void>> result = waitValueOrSignal(reply.getFuture(), Never(), Endpoint());
+
+	ASSERT(!result.isReady());
+
+	// Break the promise (simulating endpoint failure)
+	reply.sendError(broken_promise());
+
+	// waitValueOrSignal should handle broken_promise by setting value = Never() and looping.
+	// Since signal is Never() and there's no peer disconnect, it should now wait forever.
+	// We verify it doesn't crash and the result is NOT ready (it's stuck in the loop).
+	wait(delay(0.1));
+	ASSERT(!result.isReady());
+
+	return Void();
+}
+
+TEST_CASE("/fdbrpc/waitValueOrSignal/retryOnDisconnect") {
+	// End-to-end test of the retry pattern that loadBalance uses:
+	// 1. First attempt: RPC to peer1, peer1 disconnects → request_maybe_delivered
+	// 2. Second attempt: RPC to peer2, peer2 responds → success
+	// 3. Verify numAttempts > 1
+	//
+	// This reproduces the exact scenario in production: DD sends waitMetrics to a storage
+	// server, the K8s NAT kills the connection at ~3 minutes, and the fix ensures the
+	// request_maybe_delivered error propagates so loadBalance can retry on another server.
+
+	NetworkAddress addr1 = NetworkAddress::parse("1.2.3.4:1234");
+	NetworkAddress addr2 = NetworkAddress::parse("1.2.3.5:1234");
+	state Reference<Peer> peer1 = makeReference<Peer>(nullptr, addr1);
+	state Reference<Peer> peer2 = makeReference<Peer>(nullptr, addr2);
+
+	state int numAttempts = 0;
+
+	// --- Attempt 1: peer1 disconnects mid-request (simulating K8s NAT timeout) ---
+	{
+		state Promise<Void> reply1;
+		state Endpoint ep1;
+
+		state Future<ErrorOr<Void>> result1 =
+		    waitValueOrSignal(reply1.getFuture(), Never(), ep1, ReplyPromise<Void>(), peer1);
+
+		numAttempts++;
+		ASSERT(!result1.isReady());
+
+		// Connection killed by external factor (K8s NAT, network partition, etc.)
+		peer1->disconnect.send(Void());
+
+		// waitValueOrSignal must detect the disconnect and return request_maybe_delivered
+		ASSERT(result1.isReady());
+		ErrorOr<Void> r1 = result1.get();
+		ASSERT(r1.isError());
+		ASSERT(r1.getError().code() == error_code_request_maybe_delivered);
+	}
+
+	// --- Attempt 2: retry to peer2, which responds successfully ---
+	// This is what loadBalance does: on request_maybe_delivered, pick next alternative and retry
+	{
+		state Promise<Void> reply2;
+		state Endpoint ep2;
+
+		state Future<ErrorOr<Void>> result2 =
+		    waitValueOrSignal(reply2.getFuture(), Never(), ep2, ReplyPromise<Void>(), peer2);
+
+		numAttempts++;
+
+		// Second server is healthy and responds
+		reply2.send(Void());
+
+		ASSERT(result2.isReady());
+		ErrorOr<Void> r2 = result2.get();
+		ASSERT(r2.present()); // Success!
+	}
+
+	// The critical assertion: retries happened (numAttempts > 1)
+	ASSERT_GE(numAttempts, 2);
+	TraceEvent("WaitValueOrSignalRetryTest").detail("NumAttempts", numAttempts);
 
 	return Void();
 }

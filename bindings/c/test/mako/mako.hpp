@@ -88,6 +88,8 @@ enum ArgKind {
 	ARG_ENABLE_TOKEN_BASED_AUTHORIZATION,
 	ARG_TRANSACTION_TIMEOUT_TX,
 	ARG_TRANSACTION_TIMEOUT_DB,
+	ARG_WARMUP_SECONDS,
+	ARG_MAX_GRV_QUEUE_DELAY,
 };
 
 constexpr const int OP_COUNT = 0;
@@ -101,6 +103,7 @@ enum OpKind {
 	OP_GETRANGE,
 	OP_SGET,
 	OP_SGETRANGE,
+	OP_STATUSJSON,
 	OP_UPDATE,
 	OP_INSERT,
 	OP_INSERTRANGE,
@@ -159,6 +162,7 @@ struct Arguments {
 	double load_factor;
 	int row_digits;
 	int seconds;
+	int warmup_seconds;
 	int iteration;
 	int tpsmax;
 	int tpsmin;
@@ -203,12 +207,16 @@ struct Arguments {
 	std::optional<std::string> private_key_pem;
 	int transaction_timeout_db;
 	int transaction_timeout_tx;
+	int max_grv_queue_delay_ms;
 };
 
 // helper functions
-inline void setTransactionTimeoutIfEnabled(const Arguments& args, fdb::Transaction& tx) {
+inline void setTransactionOptionsIfEnabled(const Arguments& args, fdb::Transaction& tx) {
 	if (args.transaction_timeout_tx > 0) {
 		tx.setOption(FDB_TR_OPTION_TIMEOUT, args.transaction_timeout_tx);
+	}
+	if (args.max_grv_queue_delay_ms > 0) {
+		tx.setOption(FDB_TR_OPTION_MAX_GRV_QUEUE_DELAY, args.max_grv_queue_delay_ms);
 	}
 }
 
