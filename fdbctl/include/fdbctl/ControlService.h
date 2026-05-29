@@ -25,7 +25,6 @@
 #include <grpcpp/support/status.h>
 
 #include "fdbctl/ControlCommands.h"
-#include "fdbclient/ClientKnobs.h"
 #include "fdbclient/IClientApi.h"
 #include "fdbclient/Knobs.h"
 #include "flow/ThreadHelper.actor.h"
@@ -72,7 +71,7 @@ Future<grpc::Status> grpcHandlerWrapper(Reference<IDatabase> db,
 
 class ControlServiceImpl final : public fdbctl::ControlService::Service {
 public:
-	ControlServiceImpl(Reference<IDatabase> db);
+	explicit ControlServiceImpl(Reference<IDatabase> db);
 
 	DEFINE_GRPC_HANDLER(GetCoordinators, getCoordinators);
 	DEFINE_GRPC_HANDLER(ChangeCoordinators, changeCoordinators);

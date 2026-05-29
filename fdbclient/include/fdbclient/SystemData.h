@@ -79,12 +79,8 @@ enum class DataMovementReason : uint8_t {
 // SystemKey is just a Key but with a special type so that instances of it can be found easily throughput the code base
 // and in simulation constructions will verify that no SystemKey is a direct prefix of any other.
 struct SystemKey : Key {
-	SystemKey(Key const& k);
+	explicit SystemKey(Key const& k);
 };
-
-struct RestoreLoaderInterface;
-struct RestoreApplierInterface;
-struct RestoreMasterInterface;
 
 extern const KeyRangeRef normalKeys; // '' to systemKeys.begin
 extern const KeyRangeRef systemKeys; // [FF] to [FF][FF]
@@ -109,16 +105,13 @@ extern const KeyRef keyServersPrefix, keyServersEnd, keyServersKeyServersKey;
 // temporary ID, until a permanent ID is assigned to it.
 extern const UID anonymousShardId;
 extern const uint64_t assignedEmptyShardId;
-const Key keyServersKey(const KeyRef& k);
-const KeyRef keyServersKey(const KeyRef& k, Arena& arena);
-const Value keyServersValue(RangeResult result,
-                            const std::vector<UID>& src,
-                            const std::vector<UID>& dest = std::vector<UID>());
-const Value keyServersValue(const std::vector<Tag>& srcTag, const std::vector<Tag>& destTag = std::vector<Tag>());
-const Value keyServersValue(const std::vector<UID>& src,
-                            const std::vector<UID>& dest,
-                            const UID& srcID,
-                            const UID& destID);
+Key keyServersKey(const KeyRef& k);
+KeyRef keyServersKey(const KeyRef& k, Arena& arena);
+Value keyServersValue(RangeResult result,
+                      const std::vector<UID>& src,
+                      const std::vector<UID>& dest = std::vector<UID>());
+Value keyServersValue(const std::vector<Tag>& srcTag, const std::vector<Tag>& destTag = std::vector<Tag>());
+Value keyServersValue(const std::vector<UID>& src, const std::vector<UID>& dest, const UID& srcID, const UID& destID);
 // `result` must be the full result of getting serverTagKeys
 void decodeKeyServersValue(RangeResult result,
                            const ValueRef& value,
@@ -139,7 +132,7 @@ void decodeKeyServersValue(RangeResult result,
 bool isSystemKey(KeyRef key);
 
 extern const KeyRef accumulativeChecksumKey;
-const Value accumulativeChecksumValue(const AccumulativeChecksumState& acsState);
+Value accumulativeChecksumValue(const AccumulativeChecksumState& acsState);
 AccumulativeChecksumState decodeAccumulativeChecksum(const ValueRef& value);
 
 extern const KeyRangeRef auditKeys;
@@ -148,34 +141,34 @@ extern const KeyRangeRef auditRanges;
 extern const KeyRef auditRangePrefix;
 
 // Key for a particular audit
-const Key auditKey(const AuditType type, const UID& auditId);
+Key auditKey(const AuditType type, const UID& auditId);
 // KeyRange for whole audit
-const KeyRange auditKeyRange(const AuditType type);
+KeyRange auditKeyRange(const AuditType type);
 // Prefix for audit work progress by range
-const Key auditRangeBasedProgressPrefixFor(const AuditType type, const UID& auditId);
+Key auditRangeBasedProgressPrefixFor(const AuditType type, const UID& auditId);
 // Range for audit work progress by range
-const KeyRange auditRangeBasedProgressRangeFor(const AuditType type, const UID& auditId);
-const KeyRange auditRangeBasedProgressRangeFor(const AuditType type);
+KeyRange auditRangeBasedProgressRangeFor(const AuditType type, const UID& auditId);
+KeyRange auditRangeBasedProgressRangeFor(const AuditType type);
 // Prefix for audit work progress by server
-const Key auditServerBasedProgressPrefixFor(const AuditType type, const UID& auditId, const UID& serverId);
+Key auditServerBasedProgressPrefixFor(const AuditType type, const UID& auditId, const UID& serverId);
 // Range for audit work progress by server
-const KeyRange auditServerBasedProgressRangeFor(const AuditType type, const UID& auditId);
-const KeyRange auditServerBasedProgressRangeFor(const AuditType type);
+KeyRange auditServerBasedProgressRangeFor(const AuditType type, const UID& auditId);
+KeyRange auditServerBasedProgressRangeFor(const AuditType type);
 
-const Value auditStorageStateValue(const AuditStorageState& auditStorageState);
+Value auditStorageStateValue(const AuditStorageState& auditStorageState);
 AuditStorageState decodeAuditStorageState(const ValueRef& value);
 
 // "\xff/checkpoint/[[UID]] := [[CheckpointMetaData]]"
 extern const KeyRef checkpointPrefix;
-const Key checkpointKeyFor(UID checkpointID);
-const Value checkpointValue(const CheckpointMetaData& checkpoint);
+Key checkpointKeyFor(UID checkpointID);
+Value checkpointValue(const CheckpointMetaData& checkpoint);
 UID decodeCheckpointKey(const KeyRef& key);
 CheckpointMetaData decodeCheckpointValue(const ValueRef& value);
 
 // "\xff/dataMoves/[[UID]] := [[DataMoveMetaData]]"
 extern const KeyRangeRef dataMoveKeys;
-const Key dataMoveKeyFor(UID dataMoveId);
-const Value dataMoveValue(const DataMoveMetaData& dataMove);
+Key dataMoveKeyFor(UID dataMoveId);
+Value dataMoveValue(const DataMoveMetaData& dataMove);
 UID decodeDataMoveKey(const KeyRef& key);
 DataMoveMetaData decodeDataMoveValue(const ValueRef& value);
 
@@ -187,17 +180,17 @@ DataMoveMetaData decodeDataMoveValue(const ValueRef& value);
 extern const KeyRangeRef serverKeysRange;
 extern const KeyRef serverKeysPrefix;
 extern const ValueRef serverKeysTrue, serverKeysTrueEmptyRange, serverKeysFalse;
-const UID newDataMoveId(const uint64_t physicalShardId,
-                        AssignEmptyRange assignEmptyRange,
-                        const DataMoveType type,
-                        const DataMovementReason reason,
-                        UnassignShard unassignShard = UnassignShard::False);
-const Key serverKeysKey(UID serverID, const KeyRef& keys);
-const Key serverKeysPrefixFor(UID serverID);
+UID newDataMoveId(const uint64_t physicalShardId,
+                  AssignEmptyRange assignEmptyRange,
+                  const DataMoveType type,
+                  const DataMovementReason reason,
+                  UnassignShard unassignShard = UnassignShard::False);
+Key serverKeysKey(UID serverID, const KeyRef& keys);
+Key serverKeysPrefixFor(UID serverID);
 UID serverKeysDecodeServer(const KeyRef& key);
 std::pair<UID, Key> serverKeysDecodeServerBegin(const KeyRef& key);
 bool serverHasKey(ValueRef storedValue);
-const Value serverKeysValue(const UID& id);
+Value serverKeysValue(const UID& id);
 void decodeDataMoveId(const UID& id,
                       bool& assigned,
                       bool& emptyRange,
@@ -223,7 +216,7 @@ extern const KeyRangeRef tssMappingKeys;
 // For quarantining a misbehaving TSS.
 extern const KeyRangeRef tssQuarantineKeys;
 
-const Key tssQuarantineKeyFor(UID serverID);
+Key tssQuarantineKeyFor(UID serverID);
 UID decodeTssQuarantineKey(KeyRef const&);
 
 // \xff/tssMismatch/[[Tuple<TSSStorageUID, timestamp, mismatchUID>]] := [[TraceEventString]]
@@ -251,23 +244,23 @@ extern const KeyRef serverTagConflictPrefix;
 extern const KeyRangeRef serverTagHistoryKeys;
 extern const KeyRef serverTagHistoryPrefix;
 
-const Key serverTagKeyFor(UID serverID);
-const Key serverTagHistoryKeyFor(UID serverID);
-const KeyRange serverTagHistoryRangeFor(UID serverID);
-const KeyRange serverTagHistoryRangeBefore(UID serverID, Version version);
-const Value serverTagValue(Tag);
+Key serverTagKeyFor(UID serverID);
+Key serverTagHistoryKeyFor(UID serverID);
+KeyRange serverTagHistoryRangeFor(UID serverID);
+KeyRange serverTagHistoryRangeBefore(UID serverID, Version version);
+Value serverTagValue(Tag);
 UID decodeServerTagKey(KeyRef const&);
 Version decodeServerTagHistoryKey(KeyRef const&);
 Tag decodeServerTagValue(ValueRef const&);
-const Key serverTagConflictKeyFor(Tag);
+Key serverTagConflictKeyFor(Tag);
 
 //    "\xff/tagLocalityList/[[datacenterID]]" := "[[tagLocality]]"
 //	Provides the tagLocality for the given datacenterID
 //	See "FDBTypes.h" struct Tag for more details on tagLocality
 extern const KeyRangeRef tagLocalityListKeys;
 extern const KeyRef tagLocalityListPrefix;
-const Key tagLocalityListKeyFor(Optional<Value> dcID);
-const Value tagLocalityListValue(int8_t const&);
+Key tagLocalityListKeyFor(Optional<Value> dcID);
+Value tagLocalityListValue(int8_t const&);
 Optional<Value> decodeTagLocalityListKey(KeyRef const&);
 int8_t decodeTagLocalityListValue(ValueRef const&);
 
@@ -276,8 +269,8 @@ int8_t decodeTagLocalityListValue(ValueRef const&);
 //	Used in the initialization of the Data Distributor.
 extern const KeyRangeRef datacenterReplicasKeys;
 extern const KeyRef datacenterReplicasPrefix;
-const Key datacenterReplicasKeyFor(Optional<Value> dcID);
-const Value datacenterReplicasValue(int const&);
+Key datacenterReplicasKeyFor(Optional<Value> dcID);
+Value datacenterReplicasValue(int const&);
 Optional<Value> decodeDatacenterReplicasKey(KeyRef const&);
 int decodeDatacenterReplicasValue(ValueRef const&);
 
@@ -286,7 +279,7 @@ int decodeDatacenterReplicasValue(ValueRef const&);
 //	(as opposed to having no value at all)
 extern const KeyRangeRef tLogDatacentersKeys;
 extern const KeyRef tLogDatacentersPrefix;
-const Key tLogDatacentersKeyFor(Optional<Value> dcID);
+Key tLogDatacentersKeyFor(Optional<Value> dcID);
 Optional<Value> decodeTLogDatacentersKey(KeyRef const&);
 
 extern const KeyRef primaryDatacenterKey;
@@ -297,8 +290,8 @@ extern const KeyRef primaryDatacenterKey;
 //    have a new ID.  When removed from here, a storage server may release all resources and destroy itself.
 extern const KeyRangeRef serverListKeys;
 extern const KeyRef serverListPrefix;
-const Key serverListKeyFor(UID serverID);
-const Value serverListValue(StorageServerInterface const&);
+Key serverListKeyFor(UID serverID);
+Value serverListValue(StorageServerInterface const&);
 UID decodeServerListKey(KeyRef const&);
 StorageServerInterface decodeServerListValue(ValueRef const&);
 
@@ -312,8 +305,8 @@ extern const KeyRef processClassPrefix;
 extern const KeyRef processClassChangeKey;
 extern const KeyRef processClassVersionKey;
 extern const ValueRef processClassVersionValue;
-const Key processClassKeyFor(StringRef processID);
-const Value processClassValue(ProcessClass const&);
+Key processClassKeyFor(StringRef processID);
+Value processClassValue(ProcessClass const&);
 Key decodeProcessClassKey(KeyRef const&);
 ProcessClass decodeProcessClassValue(ValueRef const&);
 UID decodeProcessClassKeyOld(KeyRef const& key);
@@ -325,6 +318,7 @@ extern const KeyRangeRef configKeys;
 extern const KeyRef configKeysPrefix;
 
 extern const KeyRef backupWorkerEnabledKey;
+extern const KeyRef rangeBackupWorkerEnabledKey;
 extern const KeyRef perpetualStorageWiggleKey;
 extern const KeyRef perpetualStorageWiggleLocalityKey;
 extern const KeyRef perpetualStorageWiggleIDPrefix;
@@ -411,8 +405,8 @@ extern const KeyRef globalConfigVersionKey;
 //	and are currently (recently) available
 extern const KeyRangeRef workerListKeys;
 extern const KeyRef workerListPrefix;
-const Key workerListKeyFor(StringRef processID);
-const Value workerListValue(ProcessData const&);
+Key workerListKeyFor(StringRef processID);
+Value workerListValue(ProcessData const&);
 Key decodeWorkerListKey(KeyRef const&);
 ProcessData decodeWorkerListValue(ValueRef const&);
 
@@ -421,10 +415,23 @@ ProcessData decodeWorkerListValue(ValueRef const&);
 //	See "FDBTypes.h" struct WorkerBackupStatus for more details on the return type value.
 extern const KeyRangeRef backupProgressKeys;
 extern const KeyRef backupProgressPrefix;
-const Key backupProgressKeyFor(UID workerID);
-const Value backupProgressValue(const WorkerBackupStatus& status);
+Key backupProgressKeyFor(UID workerID);
+Value backupProgressValue(const WorkerBackupStatus& status);
 UID decodeBackupProgressKey(const KeyRef& key);
 WorkerBackupStatus decodeBackupProgressValue(const ValueRef& value);
+
+//   "\xff\x02/backupRangePartitionedProgress/[[workerID]]" := "[[WorkerBackupStatus]]"
+extern const KeyRangeRef backupRangePartitionedProgressKeys;
+extern const KeyRef backupRangePartitionedProgressPrefix;
+Key backupRangePartitionedProgressKey(UID workerID);
+Value backupRangePartitionedProgressValue(const WorkerBackupStatus& status);
+UID decodeBackupRangePartitionedProgressKey(const KeyRef& key);
+WorkerBackupStatus decodeBackupRangePartitionedProgressValue(const ValueRef& value);
+
+// The key to signal when partition map has been uploaded for a given version.
+//    "\xff\x02/backupRangePartitionedMapUploaded/<version>" := "1"
+extern const KeyRef backupRangePartitionedMapUploadedPrefix;
+Key backupRangePartitionedMapUploadedKeyFor(Version v);
 
 // The key to signal backup workers a new backup job is submitted.
 //    "\xff\x02/backupStarted" := "[[vector<UID,Version1>]]"
@@ -437,9 +444,6 @@ std::vector<std::pair<UID, Version>> decodeBackupStartedValue(const ValueRef& va
 // 0 = Send a signal to resume/already resumed.
 // 1 = Send a signal to pause/already paused.
 extern const KeyRef backupPausedKey;
-
-// The key to store the maximum version that backup workers popped in NOOP mode.
-extern const KeyRef backupWorkerMaxNoopVersionKey;
 
 //	"\xff/previousCoordinators" = "[[ClusterConnectionString]]"
 //	Set to the encoded structure of the cluster's previous set of coordinators.
@@ -467,8 +471,8 @@ extern const KeyRef minRequiredCommitVersionKey;
 //	number of microseconds since the Unix epoch.
 extern const KeyRef versionEpochKey;
 
-const Value logsValue(const std::vector<std::pair<UID, NetworkAddress>>& logs,
-                      const std::vector<std::pair<UID, NetworkAddress>>& oldLogs);
+Value logsValue(const std::vector<std::pair<UID, NetworkAddress>>& logs,
+                const std::vector<std::pair<UID, NetworkAddress>>& oldLogs);
 std::pair<std::vector<std::pair<UID, NetworkAddress>>, std::vector<std::pair<UID, NetworkAddress>>> decodeLogsValue(
     const ValueRef& value);
 
@@ -495,37 +499,48 @@ extern const UID dataDistributionModeLock;
 extern const KeyRef bulkLoadModeKey;
 extern const KeyRangeRef bulkLoadTaskKeys;
 extern const KeyRef bulkLoadTaskPrefix;
-const Value bulkLoadTaskStateValue(const BulkLoadTaskState& bulkLoadTaskState);
+Value bulkLoadTaskStateValue(const BulkLoadTaskState& bulkLoadTaskState);
 BulkLoadTaskState decodeBulkLoadTaskState(const ValueRef& value);
 
-const Value ssBulkLoadMetadataValue(const SSBulkLoadMetadata& ssBulkLoadMetadata);
+Value ssBulkLoadMetadataValue(const SSBulkLoadMetadata& ssBulkLoadMetadata);
 SSBulkLoadMetadata decodeSSBulkLoadMetadata(const ValueRef& value);
 
 extern const KeyRangeRef bulkLoadJobKeys;
 extern const KeyRef bulkLoadJobPrefix;
-const Value bulkLoadJobValue(const BulkLoadJobState& bulkLoadJobState);
+Value bulkLoadJobValue(const BulkLoadJobState& bulkLoadJobState);
 BulkLoadJobState decodeBulkLoadJobState(const ValueRef& value);
 
 extern const KeyRangeRef bulkLoadJobHistoryKeys;
 extern const KeyRef bulkLoadJobHistoryPrefix;
-const Key bulkLoadJobHistoryKeyFor(const UID& jobId);
+Key bulkLoadJobHistoryKeyFor(const UID& jobId);
 
 extern const KeyRef bulkDumpModeKey;
 extern const KeyRangeRef bulkDumpKeys;
 extern const KeyRef bulkDumpPrefix;
-const Value bulkDumpStateValue(const BulkDumpState& bulkDumpState);
+Value bulkDumpStateValue(const BulkDumpState& bulkDumpState);
 BulkDumpState decodeBulkDumpState(const ValueRef& value);
+
+// BulkDump owner tracking - stored separately for backward compatibility
+// "\xff/bulkDumpOwner/[[jobId]]" := "[[BulkDumpOwnerInfo]]"
+extern const KeyRangeRef bulkDumpOwnerKeys;
+extern const KeyRef bulkDumpOwnerPrefix;
+
+// "\xff/bulkLoadOwner/[[jobId]]" := "[[BulkDumpOwnerInfo]]" (reuses same struct)
+extern const KeyRangeRef bulkLoadOwnerKeys;
+extern const KeyRef bulkLoadOwnerPrefix;
+Key bulkDumpOwnerKeyFor(const UID& jobId);
+Key bulkLoadOwnerKeyFor(const UID& jobId);
 
 extern const std::string rangeLockNameForBulkLoad;
 extern const KeyRangeRef rangeLockKeys;
 extern const KeyRef rangeLockPrefix;
-const Value rangeLockStateSetValue(const RangeLockStateSet& rangeLockStateSet);
+Value rangeLockStateSetValue(const RangeLockStateSet& rangeLockStateSet);
 RangeLockStateSet decodeRangeLockStateSet(const ValueRef& value);
 
 extern const KeyRangeRef rangeLockOwnerKeys;
 extern const KeyRef rangeLockOwnerPrefix;
-const Key rangeLockOwnerKeyFor(const RangeLockOwnerName& ownerUniqueID);
-const Value rangeLockOwnerValue(const RangeLockOwner& rangeLockOwner);
+Key rangeLockOwnerKeyFor(const RangeLockOwnerName& ownerUniqueID);
+Value rangeLockOwnerValue(const RangeLockOwner& rangeLockOwner);
 RangeLockOwner decodeRangeLockOwner(const ValueRef& value);
 
 // Keys to view and control tag throttling
@@ -536,8 +551,6 @@ extern const KeyRef tagThrottleSignalKey;
 extern const KeyRef tagThrottleAutoEnabledKey;
 extern const KeyRef tagThrottleLimitKey;
 extern const KeyRef tagThrottleCountKey;
-extern const KeyRangeRef tagQuotaKeys;
-extern const KeyRef tagQuotaPrefix;
 
 // Log Range constant variables
 // Used in the backup pipeline to track mutations
@@ -668,7 +681,7 @@ namespace DDIgnore {
 enum IgnoreType : uint8_t { NONE = 0, REBALANCE_DISK = 1, REBALANCE_READ = 2, ALL = 3 };
 }
 
-const Value healthyZoneValue(StringRef const& zoneId, Version version);
+Value healthyZoneValue(StringRef const& zoneId, Version version);
 std::pair<Key, Version> decodeHealthyZoneValue(ValueRef const&);
 
 // All mutations done to this range are blindly copied into txnStateStore.

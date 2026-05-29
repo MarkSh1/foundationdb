@@ -248,7 +248,7 @@ private:
 				                      results->size()));
 			    } else {
 				    auto expected_kv = expected.begin();
-				    for (auto actual_kv : *results) {
+				    for (const auto& actual_kv : *results) {
 					    if (actual_kv.key != expected_kv->key || actual_kv.value != expected_kv->value) {
 						    error(fmt::format(
 						        "randomGetRangeOp mismatch. expected key: {} actual key: {} expected value: "
@@ -266,7 +266,7 @@ private:
 		    getTenant(tenantId));
 	}
 
-	void randomOperation(TTaskFct cont) {
+	void randomOperation(TTaskFct cont) override {
 		std::optional<int> tenantId = randomTenant();
 		OpType txType = (stores[tenantId].size() == 0) ? OP_INSERT : (OpType)Random::get().randomInt(0, OP_LAST);
 

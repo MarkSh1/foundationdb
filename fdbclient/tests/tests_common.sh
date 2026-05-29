@@ -96,6 +96,44 @@ function err {
   echo "$(date -Iseconds) ERROR: ${*}" >&2
 }
 
+# Check whether captured output contains a literal string.
+# Avoids echo|grep -q because pipefail can turn grep's early-exit into
+# a false negative via SIGPIPE on the upstream echo.
+# $1 output to search
+# $2 literal string to find
+function output_contains {
+  local output="$1"
+  local needle="$2"
+  grep -Fq -- "${needle}" <<<"${output}"
+}
+
+# Check whether captured output matches a basic regex.
+# $1 output to search
+# $2 regex pattern
+function output_matches {
+  local output="$1"
+  local pattern="$2"
+  grep -q -- "${pattern}" <<<"${output}"
+}
+
+# Case-insensitive regex match.
+# $1 output to search
+# $2 regex pattern
+function output_matches_i {
+  local output="$1"
+  local pattern="$2"
+  grep -qi -- "${pattern}" <<<"${output}"
+}
+
+# Extended regex match.
+# $1 output to search
+# $2 extended regex pattern
+function output_matches_E {
+  local output="$1"
+  local pattern="$2"
+  grep -qE -- "${pattern}" <<<"${output}"
+}
+
 # Check if test data should be preserved (PRESERVE_TEST_DATA=1)
 # If yes, prints preservation message and returns 0 (should skip cleanup)
 # If no, returns 1 (should continue with normal cleanup)
@@ -288,7 +326,7 @@ function log_test_result {
 # $1 Dir to search under.
 function grep_for_severity40 {
   local dir="${1}"
-  if grep -r -C 3 -e "Severity=\"40\"" "${dir}"; then
+  if grep -r --exclude-dir=encryption_mismatch_logs -C 3 -e "Severity=\"40\"" "${dir}"; then
     err "Found 'Severity=40' errors"
     return 1
   fi
@@ -324,18 +362,50 @@ function get_use_s3_default {
   fi
 }
 
-# Common S3/MockS3 environment setup - shared across all S3 tests
-# Prerequisites: USE_S3 and TLS_CA_FILE must be set before calling this function
+# Detect which blob store provider to use based on environment variables.
+# Sets USE_GCS global (USE_S3 must already be set).
+function detect_blobstore_provider {
+  USE_GCS="$( if [[ -n "${GCS_FDB_BUCKET:-}" && -n "${GCS_APPLICATION_TOKEN:-}" ]]; then echo "true"; else echo "false"; fi )"
+  readonly USE_GCS
+}
+
+# Common blobstore environment setup - shared across all blob store tests
+# Supports S3, GCS, and MockS3Server.
+# Prerequisites: USE_S3, USE_GCS, and TLS_CA_FILE must be set before calling this function
 #   (use get_use_s3_default and setup_tls_ca_file)
 # $1 build directory, $2 scratch directory, $3 path prefix (used for temp dir naming)
 # Sets global variables: TEST_SCRATCH_DIR, host, bucket, region, blob_credentials_file, query_str
-# Exports: FDB_BLOB_CREDENTIALS, FDB_TLS_CA_FILE (if using real S3)
+# Exports: FDB_BLOB_CREDENTIALS, FDB_TLS_CA_FILE (if using a real cloud provider)
 function setup_s3_environment {
   local local_build_dir="${1}"
   local local_scratch_dir="${2}"
   local local_path_prefix="${3}"
 
-  if [[ "${USE_S3}" == "true" ]]; then
+  if [[ "${USE_GCS:-false}" == "true" ]]; then
+    log "Testing against GCS"
+    if ! source "${TESTS_COMMON_DIR}/gcp_fixture.sh"; then
+      err "Failed to source gcp_fixture.sh"
+      exit 1
+    fi
+    if ! TEST_SCRATCH_DIR=$( create_gcp_dir "${local_scratch_dir}" ); then
+      err "Failed creating local gcp_dir"
+      exit 1
+    fi
+    if ! readarray -t configs < <(gcp_setup "${local_build_dir}" "${TEST_SCRATCH_DIR}"); then
+      err "Failed gcp_setup"
+      return 1
+    fi
+    host="${configs[0]}"
+    bucket="${configs[1]}"
+    blob_credentials_file="${configs[2]}"
+    region=""
+    query_str="bucket=${bucket}&p=gcs&secure_connection=1"
+    export FDB_BLOB_CREDENTIALS="${blob_credentials_file}"
+    if [[ -n "${TLS_CA_FILE:-}" ]]; then
+      export FDB_TLS_CA_FILE="${TLS_CA_FILE}"
+    fi
+
+  elif [[ "${USE_S3}" == "true" ]]; then
     log "Testing against s3"
     # Source AWS fixture (use TESTS_COMMON_DIR for reliable path resolution)
     if ! source "${TESTS_COMMON_DIR}/aws_fixture.sh"; then
@@ -359,6 +429,7 @@ function setup_s3_environment {
     if [[ -n "${TLS_CA_FILE:-}" ]]; then
       export FDB_TLS_CA_FILE="${TLS_CA_FILE}"
     fi
+
   else
     log "Testing against MockS3Server"
     # Source MockS3 fixture (use TESTS_COMMON_DIR for reliable path resolution)
@@ -391,9 +462,9 @@ function setup_s3_environment {
   readonly query_str
 }
 
-# Setup TLS CA file for S3 connections
+# Setup TLS CA file for cloud provider connections (S3, GCS)
 function setup_tls_ca_file {
-  if [[ "${USE_S3}" == "true" ]]; then
+  if [[ "${USE_S3}" == "true" || "${USE_GCS:-false}" == "true" ]]; then
     # Try to find a valid TLS CA file if not explicitly set
     if [[ -z "${TLS_CA_FILE:-}" ]]; then
       # Common locations for TLS CA files on different systems

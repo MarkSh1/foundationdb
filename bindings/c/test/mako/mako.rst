@@ -68,6 +68,11 @@ Arguments
   | Test duration in seconds (Default: 30)
   | This option cannot be set with ``--iteration``.
 
+- | ``--warmup_seconds <seconds>``
+  | Ignore the initial ``<seconds>`` of a run when computing aggregate throughput and count-based totals.
+  | Raw per-second samples are still emitted for the full run.
+  | This option is only supported with ``--seconds`` and must be smaller than ``--seconds``.
+
 - | ``-i | --iteration <iters>``
   | Specify the number of operations to be executed.
   | This option cannot be set with ``--seconds``.
@@ -143,6 +148,9 @@ Arguments
 - | ``--transaction_timeout_db <duration>``
   | Duration in milliseconds after which a transaction times out in run mode. Set as database option.
 
+- | ``--max_grv_queue_delay <duration>``
+  | Maximum estimated GRV proxy queue delay in milliseconds. Set as transaction option in run mode.
+
 Transaction Specification
 =========================
 | A transaction may contain multiple operations of various types.
@@ -156,6 +164,7 @@ Operation Types
 - ``gr`` – GET RANGE
 - ``sg`` – Snapshot GET
 - ``sgr`` – Snapshot GET RANGE
+- ``sj`` – GET ``\xff\xff/status/json`` from the special key space
 - ``u`` – Update (= GET followed by SET)
 - ``i`` – Insert (= SET with a new key)
 - ``ir`` – Insert Range (Sequential)

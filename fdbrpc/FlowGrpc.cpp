@@ -93,7 +93,7 @@ Future<Void> GrpcServer::runInternal() {
 			co_await delay(CONFIG_STARTUP_DELAY_BETWEEN_RESTART);
 
 			// gRPC can't run a server without registered service.
-			if (registered_services_.size() > 0) {
+			if (!registered_services_.empty()) {
 				break;
 			} else {
 				next = on_services_changed_.onTrigger();
@@ -200,7 +200,7 @@ void GrpcServer::registerRoleServices(const UID& owner_id, const ServiceList& se
 	on_services_changed_.trigger();
 }
 
-Future<Void> GrpcServer::deregisterRoleServices(const UID& owner_id) {
+Future<Void> GrpcServer::deregisterRoleServices(UID owner_id) {
 	ASSERT(g_network->isOnMainThread());
 	co_await stopServer();
 	registered_services_.erase(owner_id);

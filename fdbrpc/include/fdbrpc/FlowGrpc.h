@@ -26,7 +26,7 @@
 
 #include "flow/flow.h"
 #include "flow/NetworkAddress.h"
-#include "flow/TLSConfig.actor.h"
+#include "flow/TLSConfig.h"
 #include "fdbrpc/grpc/AsyncGrpcClient.h"
 #include "fdbrpc/grpc/AsyncTaskExecutor.h"
 #include "fdbrpc/grpc/Credentials.h"
@@ -110,7 +110,7 @@ class GrpcServer {
 public:
 	using ServiceList = std::vector<std::shared_ptr<grpc::Service>>;
 
-	GrpcServer(const NetworkAddress& addr, std::shared_ptr<GrpcCredentialProvider> provider = nullptr);
+	explicit GrpcServer(const NetworkAddress& addr, std::shared_ptr<GrpcCredentialProvider> provider = nullptr);
 	~GrpcServer();
 
 	// Returns the singleton instance.
@@ -150,9 +150,9 @@ public:
 	void registerService(std::shared_ptr<grpc::Service> service);
 	void registerRoleServices(const UID& owner_id, const ServiceList& services);
 
-	// Removes services associated with given `owner_id` from the server. Returns future that is fulfilled onced the
+	// Removes services associated with given `owner_id` from the server. Returns future that is fulfilled once the
 	// services are no longer alive (however, server may not have restarted yet).
-	Future<Void> deregisterRoleServices(const UID& owner_id);
+	Future<Void> deregisterRoleServices(UID owner_id);
 	void deregisterRoleServicesSync(const UID& owner_id);
 
 	// Returns `true` if TLS is enabled.

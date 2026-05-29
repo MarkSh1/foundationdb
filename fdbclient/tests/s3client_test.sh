@@ -35,6 +35,7 @@ function filter_http_debug {
   echo "${output}" | grep -v "Contents of" | grep -v "^$" | grep -v "^[[:space:]]*$" | grep -v "HTTP" | grep -v "^\[.*\]" | grep -v "^Request Header:" | grep -v "^Response Header:" | grep -v "^Response Code:" | grep -v "^Response ContentLen:" | grep -v "^-- RESPONSE CONTENT--" | grep -v "^--------" | grep -v "^<?xml" | grep -v "^<.*>" | grep -v "^'$" | grep -v "^++"
 }
 
+
 # Run s3client with proper TLS CA file handling
 # This function handles the case where TLS_CA_FILE might be empty
 function run_s3client {
@@ -250,7 +251,7 @@ function test_nonexistent_bucket {
       # 1. The command succeeded (status 0)
       # 2. The output contains the URL header
       # 3. There are no objects listed (no lines after the header)
-      if echo "${output}" | grep -q "Contents of" &&
+      if output_contains "${output}" "Contents of" &&
          [[ $(filter_http_debug "${output}" | wc -l) -eq 0 ]]; then
         # Success - we have the header and no other non-empty lines (excluding HTTP debug lines)
         return 0
@@ -293,7 +294,7 @@ function test_nonexistent_resource {
     local filtered_output
     filtered_output=$(filter_http_debug "${output}")
     
-    if ! (echo "${output}" | grep -q "Contents of" &&
+    if ! (output_contains "${output}" "Contents of" &&
           [[ -z "$(echo "${filtered_output}" | tr -d '[:space:]')" ]]); then
       err "Failed to detect non-existent resource in S3"
       return 1
@@ -307,8 +308,8 @@ function test_nonexistent_resource {
       # 1. The command succeeded (status 0)
       # 2. The output contains the URL header
       # 3. There are no actual object listings (no lines starting with FILE or DIR)
-      if echo "${output}" | grep -q "Contents of" && 
-         ! echo "${output}" | grep -q "^FILE\|^DIR"; then
+      if output_contains "${output}" "Contents of" && 
+         ! output_matches "${output}" "^FILE\|^DIR"; then
         # Success - we have the header and no object listings
         return 0
       else
@@ -367,8 +368,8 @@ function test_empty_bucket {
     local filtered_output
     filtered_output=$(filter_http_debug "${output}")
     
-    if echo "${output}" | grep -q "No objects found" || 
-       (echo "${output}" | grep -q "Contents of" && 
+    if output_contains "${output}" "No objects found" ||
+       (output_contains "${output}" "Contents of" && 
         [[ -z "$(echo "${filtered_output}" | tr -d '[:space:]')" ]]); then
       log "Successfully handled empty bucket listing"
       return 0
@@ -466,7 +467,7 @@ function test_list_with_files {
 
     local missing=0
     for i in $(seq 1 "${file_count}"); do
-      if ! echo "${output}" | grep -q "ls_test/file${i}"; then
+      if ! output_contains "${output}" "ls_test/file${i}"; then
         err "Missing file${i} in ls output"
         missing=1
       fi
@@ -538,7 +539,7 @@ function test_list_with_files {
   local output
   local status
   output=$(run_s3client "${s3client}" "${credentials}" "${logsdir}" "false" \
-    --knob_blobstore_list_max_keys_per_page=100 ls --recursive "${url}" 2>&1)
+    --knob_blobstore_list_max_keys_per_page=100 ls --recursive "${url}" 2>/dev/null)
   status=$?
 
   local missing=0
@@ -549,10 +550,10 @@ function test_list_with_files {
 
     for i in $(seq 1 "${files_per_level}"); do
       local expected="${current_path}/file${current_depth}_${i}"
-      if ! echo "${output}" | grep -q "${expected}"; then
+      if ! output_contains "${output}" "${expected}"; then
         err "Missing ${expected} in ls output"
         log "=== DEBUG: Recursive ls output ==="
-        echo "${output}" | grep -v "HTTP" | head -30
+        awk '!/HTTP/ { print; if (++count == 30) exit }' <<<"${output}"
         log "=== END DEBUG ==="
         missing=1
       fi
@@ -580,7 +581,7 @@ function test_list_with_files {
   
   while [[ $non_recursive_attempt -lt $non_recursive_attempts ]]; do
     output=$(run_s3client "${s3client}" "${credentials}" "${logsdir}" "false" \
-      --knob_blobstore_list_max_keys_per_page=10 ls "${url}" 2>&1)
+      --knob_blobstore_list_max_keys_per_page=10 ls "${url}" 2>/dev/null)
     status=$?
     
     # Reset missing flag for this attempt
@@ -799,6 +800,32 @@ if [[ "${USE_S3}" == "true" ]]; then
     query_str='bucket='"${bucket}"'&region='"${region}"'&secure_connection=1'
   fi
   path_prefix="bulkload/test/s3client"
+elif [[ "${USE_MOCK_GCS:-false}" == "true" ]]; then
+  log "Testing GCS against MockS3Server"
+  # shellcheck source=/dev/null
+  if ! source "${cwd}/mocks3_fixture.sh"; then
+    err "Failed to source mocks3_fixture.sh"
+    exit 1
+  fi
+  if ! TEST_SCRATCH_DIR=$(mktemp -d "${scratch_dir}/mockgcs_test.XXXXXX"); then
+    err "Failed create of the mockgcs test dir." >&2
+    exit 1
+  fi
+  readonly TEST_SCRATCH_DIR
+  if ! start_mocks3 "${build_dir}" "${TEST_SCRATCH_DIR}/mocks3_data"; then
+    err "Failed to start MockS3Server"
+    exit 1
+  fi
+  readonly host="${MOCKS3_HOST}:${MOCKS3_PORT}"
+  readonly bucket="test-bucket"
+  readonly region=""
+  # GCS-format credential file with Bearer token.
+  # Key by hostname only (not host:port) — GCSBlobStoreEndpoint::credentialFileKey() is "@" + parsed host.
+  readonly blob_credentials_file="${TEST_SCRATCH_DIR}/blob_credentials.json"
+  echo "{\"accounts\": {\"@${MOCKS3_HOST}\": {\"token\": \"mock-gcs-token\"}}}" > "${blob_credentials_file}"
+  query_str='bucket='"${bucket}"'&p=gcs&secure_connection=0'
+  path_prefix="gcsclient"
+
 else
   log "Testing against MockS3Server"
   # Now source in the mocks3 fixture so we can use its methods in the below.

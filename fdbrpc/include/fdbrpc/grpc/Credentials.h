@@ -30,7 +30,7 @@
 #include <grpcpp/security/tls_credentials_options.h>
 
 #include "flow/Knobs.h"
-#include "flow/TLSConfig.actor.h"
+#include "flow/TLSConfig.h"
 
 namespace ge = grpc::experimental;
 
@@ -77,7 +77,7 @@ public:
 // a valid certificate for authentication.
 class GrpcTlsCredentialProvider : public GrpcCredentialProvider {
 public:
-	GrpcTlsCredentialProvider(TLSConfig* config)
+	explicit GrpcTlsCredentialProvider(TLSConfig* config)
 	  : provider_(std::make_shared<ge::FileWatcherCertificateProvider>(config->getKeyPathSync(),
 	                                                                   config->getCertificatePathSync(),
 	                                                                   config->getCAPathSync(),

@@ -99,9 +99,20 @@
 #                                Maps to: --long-running
 #                                Values: true/false (default: false)
 #
+# TH_DISABLE_CODE_PROBES        Disable code probe collection and ensemble coverage checks
+#                                Maps to: --disable-code-probes
+#                                Values: true/false (default: false)
+#
 # TH_RANDOM_SEED                Force specific random seed for debugging
 #                                Maps to: --random-seed
 #                                Default: auto-generated
+#
+# TH_FDBSERVER_MEMORY           Pass --memory SIZE to fdbserver
+#                                Maps to: --fdbserver-memory
+#                                Example: 12288MiB
+#                                Default: unset
+#                                Note: if unset, TestHarness2 automatically uses
+#                                12288MiB for ASAN/UBSAN-instrumented binaries
 #
 # TH_OUTPUT_FORMAT              Output format for test results
 #                                Maps to: --output-format

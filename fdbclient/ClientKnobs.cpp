@@ -24,6 +24,8 @@
 #include "flow/UnitTest.h"
 #include "flow/flow.h"
 
+#include <iostream>
+
 int getSimulatedTxnTimeoutSeconds() {
 	if (deterministicRandom()->truePercent(90)) {
 		return 5;
@@ -36,6 +38,103 @@ int getSimulatedTxnTimeoutSeconds() {
 
 ClientKnobs::ClientKnobs(Randomize randomize, IsSimulated isSimulated) {
 	initialize(randomize, isSimulated);
+}
+
+namespace {
+FlowKnobs globalFlowKnobs(Randomize::False, IsSimulated::False);
+ClientKnobs globalClientKnobs(Randomize::False, IsSimulated::False);
+ClientKnobs bootstrapGlobalClientKnobs(Randomize::False, IsSimulated::False);
+
+FlowKnobs& mutableFlowKnobs() {
+	return *const_cast<FlowKnobs*>(FLOW_KNOBS);
+}
+
+ClientKnobs& mutableClientKnobs() {
+	return *const_cast<ClientKnobs*>(CLIENT_KNOBS);
+}
+
+Optional<KnobValue> tryParseKnobValueImpl(std::string const& knobName, std::string const& knobValue) {
+	auto parsedKnobValue = FLOW_KNOBS->parseKnobValue(knobName, knobValue);
+	if (!std::holds_alternative<NoKnobFound>(parsedKnobValue)) {
+		return KnobValueRef::create(parsedKnobValue);
+	}
+
+	parsedKnobValue = CLIENT_KNOBS->parseKnobValue(knobName, knobValue);
+	if (!std::holds_alternative<NoKnobFound>(parsedKnobValue)) {
+		return KnobValueRef::create(parsedKnobValue);
+	}
+
+	return {};
+}
+} // namespace
+
+ClientKnobs const* CLIENT_KNOBS = &bootstrapGlobalClientKnobs;
+
+void resetClientKnobs(Randomize randomize, IsSimulated isSimulated) {
+	FLOW_KNOBS = &globalFlowKnobs;
+	CLIENT_KNOBS = &globalClientKnobs;
+	globalFlowKnobs.reset(randomize, isSimulated);
+	globalClientKnobs.reset(randomize, isSimulated);
+}
+
+void initializeClientKnobs(Randomize randomize, IsSimulated isSimulated) {
+	mutableFlowKnobs().initialize(randomize, isSimulated);
+	mutableClientKnobs().initialize(randomize, isSimulated);
+}
+
+Optional<KnobValue> tryParseClientKnobValue(std::string const& knobName, std::string const& knobValue) {
+	return tryParseKnobValueImpl(knobName, knobValue);
+}
+
+KnobValue parseClientKnobValue(std::string const& knobName, std::string const& knobValue) {
+	auto result = tryParseClientKnobValue(knobName, knobValue);
+	if (!result.present()) {
+		throw invalid_option();
+	}
+	return result.get();
+}
+
+bool trySetClientKnob(std::string const& knobName, KnobValueRef const& knobValue) {
+	const bool setFlowKnob = knobValue.visitSetKnob(knobName, mutableFlowKnobs());
+	const bool setClientKnob = knobValue.visitSetKnob(knobName, mutableClientKnobs());
+	return setFlowKnob || setClientKnob;
+}
+
+void setClientKnob(std::string const& knobName, KnobValueRef const& knobValue) {
+	if (trySetClientKnob(knobName, knobValue)) {
+		return;
+	}
+
+	TraceEvent(SevWarnAlways, "FailedToSetKnob").detail("KnobName", knobName).detail("KnobValue", knobValue.toString());
+	throw invalid_option_value();
+}
+
+void setupClientKnobs(std::vector<std::pair<std::string, std::string>> const& knobs) {
+	for (const auto& [knobName, knobValueString] : knobs) {
+		try {
+			setClientKnob(knobName, parseClientKnobValue(knobName, knobValueString));
+		} catch (Error& e) {
+			if (e.code() == error_code_invalid_option_value) {
+				std::cerr << "WARNING: Invalid value '" << knobValueString << "' for knob option '" << knobName
+				          << "'\n";
+				TraceEvent(SevWarnAlways, "InvalidKnobValue")
+				    .detail("Knob", printable(knobName))
+				    .detail("Value", printable(knobValueString));
+			} else if (e.code() == error_code_invalid_option) {
+				std::cerr << "WARNING: Invalid knob option '" << knobName << "'\n";
+				TraceEvent(SevWarnAlways, "InvalidKnobName")
+				    .detail("Knob", printable(knobName))
+				    .detail("Value", printable(knobValueString));
+			} else {
+				std::cerr << "ERROR: Failed to set knob option '" << knobName << "': " << e.what() << "\n";
+				TraceEvent(SevError, "FailedToSetKnob")
+				    .errorUnsuppressed(e)
+				    .detail("Knob", printable(knobName))
+				    .detail("Value", printable(knobValueString));
+				throw e;
+			}
+		}
+	}
 }
 
 void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
@@ -61,6 +160,7 @@ void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( MAX_COMMIT_PROXY_CONNECTIONS,              5 ); if( randomize && BUGGIFY ) MAX_COMMIT_PROXY_CONNECTIONS = 1;
 	init( MAX_GRV_PROXY_CONNECTIONS,                 3 ); if( randomize && BUGGIFY ) MAX_GRV_PROXY_CONNECTIONS = 1;
 	init( STATUS_IDLE_TIMEOUT,                   120.0 );
+	init( STATUS_TIMEOUT,                         30.0 );
 	init( GRPC_CTL_SERVICE_DEFAULT_TIMEOUT,        5.0 );
 	init( SEND_ENTIRE_VERSION_VECTOR,            false );
 
@@ -114,8 +214,6 @@ void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( DETAILED_HEALTH_METRICS_MAX_STALENESS,   5.0 );
 	init( MID_SHARD_SIZE_MAX_STALENESS,           10.0 );
 	init( TAG_ENCODE_KEY_SERVERS,                false ); if( randomize && BUGGIFY ) TAG_ENCODE_KEY_SERVERS = true;
-	init( RANGESTREAM_FRAGMENT_SIZE,               1e6 );
-	init( RANGESTREAM_BUFFERED_FRAGMENTS_LIMIT,     20 );
 	init( QUARANTINE_TSS_ON_MISMATCH,             true ); if( randomize && BUGGIFY ) QUARANTINE_TSS_ON_MISMATCH = false; // if true, a tss mismatch will put the offending tss in quarantine. If false, it will just be killed
 	init( CHANGE_FEED_EMPTY_BATCH_TIME,          0.005 );
 
@@ -185,7 +283,7 @@ void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( COPY_LOG_BLOCKS_PER_TASK,               1000 );
 	init( COPY_LOG_PREFETCH_BLOCKS,                  3 );
 	init( COPY_LOG_READ_AHEAD_BYTES,        BACKUP_LOCK_BYTES / COPY_LOG_PREFETCH_BLOCKS); // each task will use up to COPY_LOG_PREFETCH_BLOCKS * COPY_LOG_READ_AHEAD_BYTES memory
-	init( COPY_LOG_TASK_DURATION_NANOS,	      1e10 ); // 10 seconds
+	init( COPY_LOG_TASK_DURATION_SECONDS,	        10 );
 	init( BACKUP_TASKS_PER_AGENT,                   10 );
 	init( BACKUP_POLL_PROGRESS_SECONDS,             10 );
 	init( SIM_BACKUP_TASKS_PER_AGENT,               10 );
@@ -205,9 +303,9 @@ void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( BACKUP_STATUS_DELAY,                    40.0 );
 	init( BACKUP_STATUS_JITTER,                   0.05 );
 	init( MIN_CLEANUP_SECONDS,                  3600.0 );
-	init( FASTRESTORE_ATOMICOP_WEIGHT,               1 ); if( randomize && BUGGIFY ) { FASTRESTORE_ATOMICOP_WEIGHT = deterministicRandom()->random01() * 200 + 1; }
 	init( RESTORE_RANGES_READ_BATCH,             10000 );
 
+	init( BACKUP_RANGE_PARTITIONED_VDIR_INTERVAL, 100000 * 1000000LL );
 	init( BACKUP_CONTAINER_LOCAL_ALLOW_RELATIVE_PATH, false );
 	init( ENABLE_REPLICA_CONSISTENCY_CHECK_ON_BACKUP_READS, false ); if( randomize && BUGGIFY ) { ENABLE_REPLICA_CONSISTENCY_CHECK_ON_BACKUP_READS = true; }
 	init( BACKUP_CONSISTENCY_CHECK_REQUIRED_REPLICAS, -2 ); // Do consistency check based on all available storage replicas
@@ -321,8 +419,10 @@ void ClientKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( TAG_THROTTLE_RECHECK_INTERVAL,            5.0 ); if( randomize && BUGGIFY ) TAG_THROTTLE_RECHECK_INTERVAL = 0.0;
 	init( TAG_THROTTLE_EXPIRATION_INTERVAL,        60.0 ); if( randomize && BUGGIFY ) TAG_THROTTLE_EXPIRATION_INTERVAL = 1.0;
 	init( TAG_THROTTLING_PAGE_SIZE,                4096 ); if( randomize && BUGGIFY ) TAG_THROTTLING_PAGE_SIZE = 4096;
-	init( GLOBAL_TAG_THROTTLING_RW_FUNGIBILITY_RATIO,            4.0 );
-	init( PROXY_MAX_TAG_THROTTLE_DURATION,          5.0 ); if( randomize && BUGGIFY ) PROXY_MAX_TAG_THROTTLE_DURATION = 0.5;
+	init( TAG_THROTTLING_RW_FUNGIBILITY_RATIO,      4.0 );
+	// Preserve the old public knob spelling while moving new code to the non-global name.
+	double_knobs["global_tag_throttling_rw_fungibility_ratio"] =
+	    KnobValue<double>{ &TAG_THROTTLING_RW_FUNGIBILITY_RATIO };
 	init( TRANSACTION_LOCK_REJECTION_RETRIABLE,    true );
 
 	// busyness reporting

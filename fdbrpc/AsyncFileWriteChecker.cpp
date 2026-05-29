@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-#include "fdbrpc/AsyncFileWriteChecker.actor.h"
+#include "AsyncFileWriteChecker.h"
 #include "flow/UnitTest.h"
 
 Optional<int> AsyncFileWriteChecker::checksumHistoryBudget = {};
@@ -39,7 +39,7 @@ private:
 			page = _page;
 			writeInfo = _writeInfo;
 			next = nullptr;
-			prev = NULL;
+			prev = nullptr;
 		}
 	};
 
@@ -62,7 +62,7 @@ private:
 	}
 
 public:
-	LRU2(std::string _fileName) {
+	explicit LRU2(std::string _fileName) {
 		fileName = _fileName;
 		maxFullPagePlusOne = 0;
 		start = new node(0, AsyncFileWriteChecker::WriteInfo());
@@ -100,7 +100,7 @@ public:
 	}
 
 	uint32_t randomPage() {
-		if (m.size() == 0) {
+		if (m.empty()) {
 			return 0;
 		}
 		auto it = m.begin();
@@ -144,7 +144,7 @@ public:
 	}
 
 	uint32_t leastRecentlyUsedPage() {
-		if (m.size() == 0) {
+		if (m.empty()) {
 			return 0;
 		}
 		return end->prev->page;

@@ -21,7 +21,7 @@
 #include "fdbserver/CoroFlow.h"
 #include "flow/ActorCollection.h"
 #include "Coro.h"
-#include "flow/TDMetric.actor.h"
+#include "flow/TDMetric.h"
 #include "fdbrpc/simulator.h"
 #include "fdbrpc/SimulatorProcessInfo.h"
 #include "flow/actorcompiler.h" // has to be last include
@@ -260,7 +260,7 @@ public:
 	void delref() override { ReferenceCounted<WorkPool>::delref(); }
 };
 
-typedef WorkPool<Coroutine, ThreadUnsafeSpinLock, true> CoroPool;
+using CoroPool = WorkPool<Coroutine, ThreadUnsafeSpinLock, true>;
 
 ACTOR void coroSwitcher(Future<Void> what, TaskPriority taskID, Coro* coro) {
 	try {

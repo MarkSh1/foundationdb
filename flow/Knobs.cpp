@@ -49,6 +49,8 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( HOSTNAME_RECONNECT_INIT_INTERVAL,                    .05 );
 	init( HOSTNAME_RECONNECT_MAX_INTERVAL,                     1.0 );
 	init( ENABLE_COORDINATOR_DNS_CACHE,                      false ); if( randomize && BUGGIFY ) ENABLE_COORDINATOR_DNS_CACHE = true;
+	init( COORDINATOR_DNS_CACHE_REFRESH_INTERVAL,             3.0 );
+	init( COORDINATOR_DNS_CACHE_TTL,                         30.0 );
 	init( CACHE_REFRESH_INTERVAL_WHEN_ALL_ALTERNATIVES_FAILED, 1.0 );
 
 	init( DELAY_JITTER_OFFSET,                                 0.9 );
@@ -159,7 +161,6 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	init( SIM_PAGE_CACHE_64K,                                  1e7 );
 	init( BUGGIFY_SIM_PAGE_CACHE_4K,                           1e6 );
 	init( BUGGIFY_SIM_PAGE_CACHE_64K,                          1e6 );
-	init( BLOB_WORKER_PAGE_CACHE,                            500e6 );
 	init( MAX_EVICT_ATTEMPTS,                                  100 ); if( randomize && BUGGIFY ) MAX_EVICT_ATTEMPTS = 2;
 	init( CACHE_EVICTION_POLICY,                          "random" );
 	init( PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION,                 0.1 ); if( randomize && BUGGIFY ) PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION = 0.0; else if( randomize && BUGGIFY ) PAGE_CACHE_TRUNCATE_LOOKUP_FRACTION = 1.0;
@@ -172,10 +173,6 @@ void FlowKnobs::initialize(Randomize randomize, IsSimulated isSimulated) {
 	//AsyncFileEIO
 	init( EIO_MAX_PARALLELISM,                                  4  );
 	init( EIO_USE_ODIRECT,                                      0  );
-
-	//AsyncFileEncrypted
-	init( ENCRYPTION_BLOCK_SIZE,                              4096 );
-	init( MAX_DECRYPTED_BLOCKS,                                 10 );
 
 	//AsyncFileKAIO
 	init( MAX_OUTSTANDING,                                      64 );
@@ -409,15 +406,15 @@ static bool safe_stob(std::string const& str) {
 // invalid_option_value exception.
 ParsedKnobValue Knobs::parseKnobValue(std::string const& knob, std::string const& value) const {
 	try {
-		if (double_knobs.count(knob)) {
+		if (double_knobs.contains(knob)) {
 			return safe_stod(value);
-		} else if (bool_knobs.count(knob)) {
+		} else if (bool_knobs.contains(knob)) {
 			return safe_stob(value);
-		} else if (int64_knobs.count(knob)) {
+		} else if (int64_knobs.contains(knob)) {
 			return safe_stoi64(value);
-		} else if (int_knobs.count(knob)) {
+		} else if (int_knobs.contains(knob)) {
 			return safe_stoi(value);
-		} else if (string_knobs.count(knob)) {
+		} else if (string_knobs.contains(knob)) {
 			return value;
 		}
 		return NoKnobFound{};
@@ -427,7 +424,7 @@ ParsedKnobValue Knobs::parseKnobValue(std::string const& knob, std::string const
 }
 
 bool Knobs::setKnob(std::string const& knob, int value) {
-	if (!int_knobs.count(knob)) {
+	if (!int_knobs.contains(knob)) {
 		return false;
 	}
 	*int_knobs[knob].value = value;
@@ -436,7 +433,7 @@ bool Knobs::setKnob(std::string const& knob, int value) {
 }
 
 bool Knobs::setKnob(std::string const& knob, int64_t value) {
-	if (!int64_knobs.count(knob)) {
+	if (!int64_knobs.contains(knob)) {
 		return false;
 	}
 	*int64_knobs[knob].value = value;
@@ -445,7 +442,7 @@ bool Knobs::setKnob(std::string const& knob, int64_t value) {
 }
 
 bool Knobs::setKnob(std::string const& knob, bool value) {
-	if (!bool_knobs.count(knob)) {
+	if (!bool_knobs.contains(knob)) {
 		return false;
 	}
 	*bool_knobs[knob].value = value;
@@ -454,7 +451,7 @@ bool Knobs::setKnob(std::string const& knob, bool value) {
 }
 
 bool Knobs::setKnob(std::string const& knob, double value) {
-	if (!double_knobs.count(knob)) {
+	if (!double_knobs.contains(knob)) {
 		return false;
 	}
 	*double_knobs[knob].value = value;
@@ -463,7 +460,7 @@ bool Knobs::setKnob(std::string const& knob, double value) {
 }
 
 bool Knobs::setKnob(std::string const& knob, std::string const& value) {
-	if (!string_knobs.count(knob)) {
+	if (!string_knobs.contains(knob)) {
 		return false;
 	}
 	*string_knobs[knob].value = value;
@@ -472,19 +469,19 @@ bool Knobs::setKnob(std::string const& knob, std::string const& value) {
 }
 
 ParsedKnobValue Knobs::getKnob(const std::string& name) const {
-	if (double_knobs.count(name) > 0) {
+	if (double_knobs.contains(name)) {
 		return ParsedKnobValue{ *double_knobs.at(name).value };
 	}
-	if (int64_knobs.count(name) > 0) {
+	if (int64_knobs.contains(name)) {
 		return ParsedKnobValue{ *int64_knobs.at(name).value };
 	}
-	if (int_knobs.count(name) > 0) {
+	if (int_knobs.contains(name)) {
 		return ParsedKnobValue{ *int_knobs.at(name).value };
 	}
-	if (string_knobs.count(name) > 0) {
+	if (string_knobs.contains(name)) {
 		return ParsedKnobValue{ *string_knobs.at(name).value };
 	}
-	if (bool_knobs.count(name) > 0) {
+	if (bool_knobs.contains(name)) {
 		return ParsedKnobValue{ *bool_knobs.at(name).value };
 	}
 
@@ -492,35 +489,35 @@ ParsedKnobValue Knobs::getKnob(const std::string& name) const {
 }
 
 void Knobs::initKnob(double& knob, double value, std::string const& name) {
-	if (!explicitlySetKnobs.count(toLower(name))) {
+	if (!explicitlySetKnobs.contains(toLower(name))) {
 		knob = value;
 		double_knobs[toLower(name)] = KnobValue<double>{ &knob };
 	}
 }
 
 void Knobs::initKnob(int64_t& knob, int64_t value, std::string const& name) {
-	if (!explicitlySetKnobs.count(toLower(name))) {
+	if (!explicitlySetKnobs.contains(toLower(name))) {
 		knob = value;
 		int64_knobs[toLower(name)] = KnobValue<int64_t>{ &knob };
 	}
 }
 
 void Knobs::initKnob(int& knob, int value, std::string const& name) {
-	if (!explicitlySetKnobs.count(toLower(name))) {
+	if (!explicitlySetKnobs.contains(toLower(name))) {
 		knob = value;
 		int_knobs[toLower(name)] = KnobValue<int>{ &knob };
 	}
 }
 
 void Knobs::initKnob(std::string& knob, const std::string& value, const std::string& name) {
-	if (!explicitlySetKnobs.count(toLower(name))) {
+	if (!explicitlySetKnobs.contains(toLower(name))) {
 		knob = value;
 		string_knobs[toLower(name)] = KnobValue<std::string>{ &knob };
 	}
 }
 
 void Knobs::initKnob(bool& knob, bool value, std::string const& name) {
-	if (!explicitlySetKnobs.count(toLower(name))) {
+	if (!explicitlySetKnobs.contains(toLower(name))) {
 		knob = value;
 		bool_knobs[toLower(name)] = KnobValue<bool>{ &knob };
 	}

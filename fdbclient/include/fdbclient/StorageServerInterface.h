@@ -36,7 +36,7 @@
 #include "fdbrpc/TimedRequest.h"
 #include "fdbrpc/TSSComparison.h"
 #include "fdbclient/CommitTransaction.h"
-#include "fdbclient/TagThrottle.actor.h"
+#include "fdbclient/TagThrottle.h"
 #include "fdbclient/Tracing.h"
 #include "flow/UnitTest.h"
 #include "fdbclient/VersionVector.h"
@@ -129,6 +129,7 @@ struct StorageServerInterface {
 	RequestStream<struct BulkDumpRequest> bulkdump;
 
 private:
+	void initEndpointsFromGetValue();
 	bool acceptingRequests;
 
 public:
@@ -156,82 +157,12 @@ public:
 		serializer(ar, uniqueID, locality, getValue, tssPairID, acceptingRequests);
 
 		if (Ar::isDeserializing) {
-			getKey = PublicRequestStream<struct GetKeyRequest>(getValue.getEndpoint().getAdjustedEndpoint(1));
-			getKeyValues =
-			    PublicRequestStream<struct GetKeyValuesRequest>(getValue.getEndpoint().getAdjustedEndpoint(2));
-			getShardState = RequestStream<struct GetShardStateRequest>(getValue.getEndpoint().getAdjustedEndpoint(3));
-			waitMetrics = PublicRequestStream<struct WaitMetricsRequest>(getValue.getEndpoint().getAdjustedEndpoint(4));
-			splitMetrics = RequestStream<struct SplitMetricsRequest>(getValue.getEndpoint().getAdjustedEndpoint(5));
-			getStorageMetrics =
-			    RequestStream<struct GetStorageMetricsRequest>(getValue.getEndpoint().getAdjustedEndpoint(6));
-			waitFailure = RequestStream<ReplyPromise<Void>>(getValue.getEndpoint().getAdjustedEndpoint(7));
-			getQueuingMetrics =
-			    RequestStream<struct StorageQueuingMetricsRequest>(getValue.getEndpoint().getAdjustedEndpoint(8));
-			getKeyValueStoreType =
-			    RequestStream<ReplyPromise<KeyValueStoreType>>(getValue.getEndpoint().getAdjustedEndpoint(9));
-			watchValue = PublicRequestStream<struct WatchValueRequest>(getValue.getEndpoint().getAdjustedEndpoint(10));
-			getReadHotRanges =
-			    RequestStream<struct ReadHotSubRangeRequest>(getValue.getEndpoint().getAdjustedEndpoint(11));
-			getRangeSplitPoints =
-			    RequestStream<struct SplitRangeRequest>(getValue.getEndpoint().getAdjustedEndpoint(12));
-			getKeyValuesStream =
-			    PublicRequestStream<struct GetKeyValuesStreamRequest>(getValue.getEndpoint().getAdjustedEndpoint(13));
-			getMappedKeyValues =
-			    PublicRequestStream<struct GetMappedKeyValuesRequest>(getValue.getEndpoint().getAdjustedEndpoint(14));
-			changeFeedStream =
-			    RequestStream<struct ChangeFeedStreamRequest>(getValue.getEndpoint().getAdjustedEndpoint(15));
-			overlappingChangeFeeds =
-			    RequestStream<struct OverlappingChangeFeedsRequest>(getValue.getEndpoint().getAdjustedEndpoint(16));
-			changeFeedPop = RequestStream<struct ChangeFeedPopRequest>(getValue.getEndpoint().getAdjustedEndpoint(17));
-			changeFeedVersionUpdate =
-			    RequestStream<struct ChangeFeedVersionUpdateRequest>(getValue.getEndpoint().getAdjustedEndpoint(18));
-			checkpoint = RequestStream<struct GetCheckpointRequest>(getValue.getEndpoint().getAdjustedEndpoint(19));
-			fetchCheckpoint =
-			    RequestStream<struct FetchCheckpointRequest>(getValue.getEndpoint().getAdjustedEndpoint(20));
-			fetchCheckpointKeyValues =
-			    RequestStream<struct FetchCheckpointKeyValuesRequest>(getValue.getEndpoint().getAdjustedEndpoint(21));
-			updateCommitCostRequest =
-			    RequestStream<struct UpdateCommitCostRequest>(getValue.getEndpoint().getAdjustedEndpoint(22));
-			auditStorage = RequestStream<struct AuditStorageRequest>(getValue.getEndpoint().getAdjustedEndpoint(23));
-			getHotShards = RequestStream<struct GetHotShardsRequest>(getValue.getEndpoint().getAdjustedEndpoint(24));
-			getCheckSum =
-			    RequestStream<struct GetStorageCheckSumRequest>(getValue.getEndpoint().getAdjustedEndpoint(25));
-			bulkdump = RequestStream<struct BulkDumpRequest>(getValue.getEndpoint().getAdjustedEndpoint(26));
+			initEndpointsFromGetValue();
 		}
 	}
 	bool operator==(StorageServerInterface const& s) const { return uniqueID == s.uniqueID; }
 	bool operator<(StorageServerInterface const& s) const { return uniqueID < s.uniqueID; }
-	void initEndpoints() {
-		std::vector<std::pair<FlowReceiver*, TaskPriority>> streams;
-		streams.push_back(getValue.getReceiver(TaskPriority::LoadBalancedEndpoint));
-		streams.push_back(getKey.getReceiver(TaskPriority::LoadBalancedEndpoint));
-		streams.push_back(getKeyValues.getReceiver(TaskPriority::LoadBalancedEndpoint));
-		streams.push_back(getShardState.getReceiver());
-		streams.push_back(waitMetrics.getReceiver());
-		streams.push_back(splitMetrics.getReceiver());
-		streams.push_back(getStorageMetrics.getReceiver());
-		streams.push_back(waitFailure.getReceiver());
-		streams.push_back(getQueuingMetrics.getReceiver());
-		streams.push_back(getKeyValueStoreType.getReceiver());
-		streams.push_back(watchValue.getReceiver());
-		streams.push_back(getReadHotRanges.getReceiver());
-		streams.push_back(getRangeSplitPoints.getReceiver());
-		streams.push_back(getKeyValuesStream.getReceiver(TaskPriority::LoadBalancedEndpoint));
-		streams.push_back(getMappedKeyValues.getReceiver(TaskPriority::LoadBalancedEndpoint));
-		streams.push_back(changeFeedStream.getReceiver());
-		streams.push_back(overlappingChangeFeeds.getReceiver());
-		streams.push_back(changeFeedPop.getReceiver());
-		streams.push_back(changeFeedVersionUpdate.getReceiver());
-		streams.push_back(checkpoint.getReceiver());
-		streams.push_back(fetchCheckpoint.getReceiver());
-		streams.push_back(fetchCheckpointKeyValues.getReceiver());
-		streams.push_back(updateCommitCostRequest.getReceiver());
-		streams.push_back(auditStorage.getReceiver());
-		streams.push_back(getHotShards.getReceiver());
-		streams.push_back(getCheckSum.getReceiver());
-		streams.push_back(bulkdump.getReceiver());
-		FlowTransport::transport().addEndpoints(streams);
-	}
+	void initEndpoints();
 };
 
 struct StorageInfo : NonCopyable, public ReferenceCounted<StorageInfo> {
@@ -243,8 +174,8 @@ struct StorageInfo : NonCopyable, public ReferenceCounted<StorageInfo> {
 struct StorageServerMetaInfo : public StorageServerInterface {
 	Optional<StorageMetadataType> metadata;
 
-	StorageServerMetaInfo(const StorageServerInterface& interface,
-	                      Optional<StorageMetadataType> metadata = Optional<StorageMetadataType>())
+	explicit StorageServerMetaInfo(const StorageServerInterface& interface,
+	                               Optional<StorageMetadataType> metadata = Optional<StorageMetadataType>())
 	  : StorageServerInterface(interface), metadata(metadata) {}
 };
 
@@ -475,7 +406,7 @@ struct GetKeyValuesStreamReply : public ReplyPromiseStreamReply {
 	bool cached = false;
 
 	GetKeyValuesStreamReply() : version(invalidVersion), more(false), cached(false) {}
-	GetKeyValuesStreamReply(GetKeyValuesReply r)
+	explicit GetKeyValuesStreamReply(GetKeyValuesReply r)
 	  : arena(r.arena), data(r.data), version(r.version), more(r.more), cached(r.cached) {}
 
 	int expectedSize() const { return sizeof(GetKeyValuesStreamReply) + data.expectedSize(); }
@@ -821,7 +752,7 @@ struct ReadHotSubRangeRequest {
 	int chunkCount = 1;
 
 	ReadHotSubRangeRequest() {}
-	ReadHotSubRangeRequest(KeyRangeRef const& keys, SplitType type = SplitType::BYTES, int chunkCount = 1)
+	explicit ReadHotSubRangeRequest(KeyRangeRef const& keys, SplitType type = SplitType::BYTES, int chunkCount = 1)
 	  : keys(arena, keys), type(type), chunkCount(chunkCount) {}
 
 	template <class Ar>
@@ -971,7 +902,7 @@ struct FetchCheckpointReply : public ReplyPromiseStreamReply {
 	Standalone<StringRef> data;
 
 	FetchCheckpointReply() {}
-	FetchCheckpointReply(StringRef token) : token(token) {}
+	explicit FetchCheckpointReply(StringRef token) : token(token) {}
 
 	int expectedSize() const { return data.expectedSize(); }
 
