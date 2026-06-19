@@ -1842,14 +1842,6 @@ static AsyncResult<JsonBuilderObject> dataStatusFetcher(WorkerDetails ddWorker,
 		TraceEventFields startingStats = dataInfo[0];
 		TraceEventFields dataStats = dataInfo[1];
 
-		if (startingStats.size() && startingStats.getValue("State") != "Active") {
-			JsonBuilderObject stateSectionObj;
-			stateSectionObj["name"] = "initializing";
-			stateSectionObj["description"] = "(Re)initializing automatic data distribution";
-			statusObjData["state"] = stateSectionObj;
-			co_return statusObjData;
-		}
-
 		TraceEventFields md = dataInfo[2];
 
 		// If we have a MovingData message, parse it.
@@ -1878,6 +1870,14 @@ static AsyncResult<JsonBuilderObject> dataStatusFetcher(WorkerDetails ddWorker,
 			statusObjData.setKeyRawNumber("total_kv_size_bytes", dataStats.getValue("TotalSizeBytes"));
 			statusObjData.setKeyRawNumber("system_kv_size_bytes", dataStats.getValue("SystemSizeBytes"));
 			statusObjData.setKeyRawNumber("partitions_count", dataStats.getValue("Shards"));
+		}
+
+		if (startingStats.size() && startingStats.getValue("State") != "Active") {
+			JsonBuilderObject stateSectionObj;
+			stateSectionObj["name"] = "initializing";
+			stateSectionObj["description"] = "Healthy (Re)initializing automatic data distribution";
+			statusObjData["state"] = stateSectionObj;
+			co_return statusObjData;
 		}
 
 		JsonBuilderArray teamTrackers;
