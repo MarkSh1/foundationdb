@@ -147,7 +147,7 @@ public:
 	// These are to permit use as state variables in actors:
 	ReadYourWritesTransaction() : cache(&arena), writes(&arena) {}
 	void operator=(ReadYourWritesTransaction&& r) noexcept;
-	ReadYourWritesTransaction(ReadYourWritesTransaction&& r) noexcept;
+	explicit(false) ReadYourWritesTransaction(ReadYourWritesTransaction&& r) noexcept;
 
 	void cancel();
 	void reset();
@@ -205,7 +205,8 @@ public:
 	template <typename Type>
 	using FutureT = Future<Type>;
 
-	virtual void debugTrace(BaseTraceEvent&& event);
+	// not virtual because final class
+	void debugTrace(BaseTraceEvent&& event);
 	void debugPrint(std::string const& message);
 
 	// Used by ThreadSafeTransaction for exceptions thrown in void methods.
@@ -266,5 +267,7 @@ private:
 	std::vector<std::pair<FDBTransactionOptions::Option, Optional<WipedString>>> sensitivePersistentOptions;
 	ReadYourWritesTransactionOptions options;
 };
+
+Future<Optional<Value>> getJSON(Database db, std::string jsonField = "");
 
 #endif

@@ -24,10 +24,11 @@
 #include "flow/ApiVersion.h"
 #include "flow/FastAlloc.h"
 #include "flow/FastRef.h"
-#include "fdbclient/GlobalConfig.actor.h"
+#include "fdbclient/GlobalConfig.h"
 #include "fdbclient/StorageServerInterface.h"
 #include "flow/IRandom.h"
 #include "flow/genericactors.actor.h"
+#include <compare>
 #include <vector>
 #include <unordered_map>
 #pragma once
@@ -36,13 +37,12 @@
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/KeyRangeMap.h"
 #include "fdbclient/CommitProxyInterface.h"
-#include "fdbclient/SpecialKeySpace.actor.h"
+#include "fdbclient/SpecialKeySpace.h"
 #include "fdbclient/VersionVector.h"
-#include "fdbclient/IKeyValueStore.actor.h"
 #include "fdbrpc/QueueModel.h"
 #include "fdbrpc/MultiInterface.h"
-#include "flow/TDMetric.actor.h"
-#include "fdbclient/EventTypes.actor.h"
+#include "flow/TDMetric.h"
+#include "fdbclient/EventTypes.h"
 #include "fdbrpc/Smoother.h"
 #include "fdbrpc/DDSketch.h"
 
@@ -89,7 +89,7 @@ private:
 	Smoother smoothReleased;
 
 public:
-	ClientTagThrottleData(ClientTagThrottleLimits const& limits)
+	explicit ClientTagThrottleData(ClientTagThrottleLimits const& limits)
 	  : tpsRate(limits.tpsRate), expiration(limits.expiration), lastCheck(now()),
 	    smoothRate(CLIENT_KNOBS->TAG_THROTTLE_SMOOTHING_WINDOW),
 	    smoothReleased(CLIENT_KNOBS->TAG_THROTTLE_SMOOTHING_WINDOW) {
@@ -152,7 +152,7 @@ public:
 
 	Reference<const WatchParameters> parameters;
 
-	WatchMetadata(Reference<const WatchParameters> parameters) : parameters(parameters) {}
+	explicit WatchMetadata(Reference<const WatchParameters> parameters) : parameters(parameters) {}
 };
 
 struct MutationAndVersionStream {
@@ -237,7 +237,7 @@ public:
 	Future<HealthMetrics> getHealthMetrics(bool detailed);
 	// Get storage stats of a storage server from the cached healthy metrics if now() - lastUpdate < maxStaleness.
 	// Otherwise, ask GRVProxy for the up-to-date health metrics.
-	Future<Optional<HealthMetrics::StorageStats>> getStorageStats(const UID& id, double maxStaleness);
+	Future<Optional<HealthMetrics::StorageStats>> getStorageStats(UID id, double maxStaleness);
 	// Pass a negative value for `shardLimit` to indicate no limit on the shard number.
 	Future<StorageMetrics> getStorageMetrics(
 	    KeyRange const& keys,
@@ -379,7 +379,9 @@ public:
 		TagSet tags;
 		Optional<UID> debugID;
 
-		VersionRequest(SpanContext spanContext, TagSet tags = TagSet(), Optional<UID> debugID = Optional<UID>())
+		explicit VersionRequest(SpanContext spanContext,
+		                        TagSet tags = TagSet(),
+		                        Optional<UID> debugID = Optional<UID>())
 		  : spanContext(spanContext), tags(tags), debugID(debugID) {}
 	};
 
@@ -388,7 +390,16 @@ public:
 		PromiseStream<VersionRequest> stream;
 		Future<Void> actor;
 	};
-	std::map<uint32_t, VersionBatcher> versionBatcher;
+	struct VersionBatcherKey {
+		uint32_t flags;
+		Optional<int64_t> maxGrvQueueDelayMS;
+
+		VersionBatcherKey(uint32_t flags, Optional<int64_t> maxGrvQueueDelayMS)
+		  : flags(flags), maxGrvQueueDelayMS(maxGrvQueueDelayMS) {}
+
+		std::strong_ordering operator<=>(VersionBatcherKey const& rhs) const = default;
+	};
+	std::map<VersionBatcherKey, VersionBatcher> versionBatcher;
 
 	AsyncTrigger connectionFileChangedTrigger;
 
@@ -417,10 +428,6 @@ public:
 	std::unordered_map<UID, StorageServerInterface> tssMapping;
 	// map from tssid -> metrics for that tss pair
 	std::unordered_map<UID, Reference<TSSMetrics>> tssMetrics;
-
-	IKeyValueStore* storage = nullptr;
-
-	void setStorage(IKeyValueStore* storage);
 
 	// map from ssid -> ss tag
 	// @note this map allows the client to identify the latest commit versions
@@ -515,7 +522,7 @@ public:
 	TaskPriority taskID;
 
 	Int64MetricHandle getValueSubmitted;
-	EventMetricHandle<GetValueComplete> getValueCompleted;
+	EventMetricHandle<GetValueCompleteDescriptor> getValueCompleted;
 
 	Reference<AsyncVar<ClientDBInfo>> clientInfo;
 	Future<Void> clientInfoMonitor;
@@ -670,7 +677,8 @@ private:
 
 // Similar to tr.onError(), but doesn't require a DatabaseContext.
 struct Backoff {
-	Backoff(double backoff = CLIENT_KNOBS->DEFAULT_BACKOFF, double maxBackoff = CLIENT_KNOBS->DEFAULT_MAX_BACKOFF)
+	explicit Backoff(double backoff = CLIENT_KNOBS->DEFAULT_BACKOFF,
+	                 double maxBackoff = CLIENT_KNOBS->DEFAULT_MAX_BACKOFF)
 	  : backoff(backoff), maxBackoff(maxBackoff) {}
 
 	Future<Void> onError() {

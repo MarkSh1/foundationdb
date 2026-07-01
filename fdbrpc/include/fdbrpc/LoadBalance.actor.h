@@ -150,7 +150,7 @@ Future<Void> tssComparison(Req req,
 			if (!TSS_doCompare(src.get(), tss.get().get())) {
 				CODE_PROBE(true, "TSS Mismatch");
 				state TraceEvent mismatchEvent(
-				    (g_network->isSimulated() && g_simulator->tssMode == ISimulator::TSSMode::EnabledDropMutations)
+				    (simulationPolicyHasCapability(ISimulationPolicy::Capability::WarnOnStorageMismatch))
 				        ? SevWarnAlways
 				        : SevError,
 				    LB_mismatchTraceName(req, TSS_COMPARISON));
@@ -213,11 +213,12 @@ Future<Void> tssComparison(Req req,
 						tssData.metrics->recordDetailedMismatchData(mismatchUID, mismatchEvent.getFields().toString());
 
 						// record a summarized trace event instead
-						TraceEvent summaryEvent((g_network->isSimulated() &&
-						                         g_simulator->tssMode == ISimulator::TSSMode::EnabledDropMutations)
-						                            ? SevWarnAlways
-						                            : SevError,
-						                        LB_mismatchTraceName(req, TSS_COMPARISON));
+						TraceEvent summaryEvent(
+						    (g_network->isSimulated() &&
+						     simulationPolicyHasCapability(ISimulationPolicy::Capability::WarnOnStorageMismatch))
+						        ? SevWarnAlways
+						        : SevError,
+						    LB_mismatchTraceName(req, TSS_COMPARISON));
 						summaryEvent.detail("TSSID", tssData.tssId).detail("MismatchId", mismatchUID);
 					}
 				} else {
@@ -241,42 +242,6 @@ Future<Void> tssComparison(Req req,
 		    .detail("TSSID", tssData.tssId)
 		    .detail("SSError", srcErrorCode)
 		    .detail("TSSError", tssErrorCode);
-	}
-
-	return Void();
-}
-
-ACTOR template <class Resp>
-Future<Void> waitForQuorumReplies(std::vector<Future<Optional<ErrorOr<Resp>>>>* replies, int required) {
-	state int outstandingReplies = (int)replies->size();
-	state int requiredReplies = std::min(required, (int)replies->size());
-	state std::vector<Future<Optional<ErrorOr<Resp>>>> ongoingReplies;
-	loop {
-		ongoingReplies.clear();
-		for (auto& reply : (*replies)) {
-			if (!reply.isReady()) {
-				ongoingReplies.push_back(reply);
-			}
-		}
-		ASSERT(ongoingReplies.size() == outstandingReplies);
-
-		if (requiredReplies == 0 || outstandingReplies == 0) {
-			break;
-		}
-
-		wait(quorum(ongoingReplies, std::min(requiredReplies, outstandingReplies)));
-
-		for (auto& reply : ongoingReplies) {
-			if (reply.isReady()) {
-				outstandingReplies--;
-				if (!reply.isError() && reply.get().present() && !reply.get().get().isError()) {
-					Optional<LoadBalancedReply> lbReply = getLoadBalancedReply(&reply.get().get().get());
-					if (lbReply.present() && !lbReply.get().error.present()) {
-						requiredReplies--;
-					}
-				}
-			}
-		}
 	}
 
 	return Void();
@@ -465,7 +430,7 @@ struct RequestData : NonCopyable {
 	bool compareReplicas = false;
 	Future<Void> comparisonResult;
 
-	RequestData(bool compareReplicas = false) : compareReplicas(compareReplicas) {}
+	explicit RequestData(bool compareReplicas = false) : compareReplicas(compareReplicas) {}
 
 	// Whether or not the response future is valid
 	// This is true once setupRequest is called, even though at that point the response is Never().
@@ -549,14 +514,14 @@ struct RequestData : NonCopyable {
 		if (backoff > 0) {
 			response = mapAsync(delay(backoff), [this, stream, &request, model, alternatives, channel](Void _) {
 				requestStarted = true;
-				modelHolder = Reference<ModelHolder>(new ModelHolder(model, stream->getEndpoint().token.first()));
+				modelHolder = makeReference<ModelHolder>(model, stream->getEndpoint().token.first());
 				Future<Reply> resp = stream->tryGetReply(request);
 				maybeDuplicateTSSRequest(stream, request, model, resp, alternatives, channel);
 				return resp;
 			});
 		} else {
 			requestStarted = true;
-			modelHolder = Reference<ModelHolder>(new ModelHolder(model, stream->getEndpoint().token.first()));
+			modelHolder = makeReference<ModelHolder>(model, stream->getEndpoint().token.first());
 			response = stream->tryGetReply(request);
 			maybeDuplicateTSSRequest(stream, request, model, response, alternatives, channel);
 		}
@@ -688,19 +653,16 @@ struct RequestData : NonCopyable {
 // interfaces. If too many interfaces in the same DC are bad, try remote interfaces.
 // If compareReplicas is set, does a consistency check by fetching and comparing results from storage
 // replicas (as many as specified by "requiredReplicas") and throws an exception if an inconsistency is found.
-// FIXME: reformat this minus the long inline comment about one parameter, so that the indentation of
-// the parameters is more to the right and not confusingly lined up with the code of this function.
 ACTOR template <class Interface, class Request, class Multi, bool P>
-Future<REPLY_TYPE(Request)> loadBalance(
-    Reference<MultiInterface<Multi>> alternatives,
-    RequestStream<Request, P> Interface::* channel,
-    Request request = Request(),
-    TaskPriority taskID = TaskPriority::DefaultPromiseEndpoint,
-    AtMostOnce atMostOnce =
-        AtMostOnce::False, // if true, throws request_maybe_delivered() instead of retrying automatically
-    QueueModel* model = nullptr,
-    bool compareReplicas = false,
-    int requiredReplicas = 0) {
+Future<REPLY_TYPE(Request)> loadBalance(Reference<MultiInterface<Multi>> alternatives,
+                                        RequestStream<Request, P> Interface::* channel,
+                                        Request request = Request(),
+                                        TaskPriority taskID = TaskPriority::DefaultPromiseEndpoint,
+                                        // If true, throws request_maybe_delivered() instead of retrying automatically.
+                                        AtMostOnce atMostOnce = AtMostOnce::False,
+                                        QueueModel* model = nullptr,
+                                        bool compareReplicas = false,
+                                        int requiredReplicas = 0) {
 
 	state RequestData<Request, Interface, Multi, P> firstRequestData(compareReplicas);
 	state RequestData<Request, Interface, Multi, P> secondRequestData(compareReplicas);

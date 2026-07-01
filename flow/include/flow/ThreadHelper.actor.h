@@ -300,7 +300,7 @@ public:
 	public:
 		Event ev;
 
-		BlockCallback(ThreadSingleAssignmentVarBase& sav) {
+		explicit BlockCallback(ThreadSingleAssignmentVarBase& sav) {
 			int ignore = 0;
 			sav.callOrSetAsCallback(this, ignore, 0);
 			ev.block();
@@ -326,7 +326,8 @@ public:
 		}
 	}
 
-	ThreadSingleAssignmentVarBase() : status(Unset), callback(NULL), valueReferenceCount(0) {} //, referenceCount(1) {}
+	ThreadSingleAssignmentVarBase()
+	  : status(Unset), callback(nullptr), valueReferenceCount(0) {} //, referenceCount(1) {}
 	~ThreadSingleAssignmentVarBase() {
 		this->mutex.assertNotEntered();
 
@@ -598,15 +599,19 @@ public:
 	explicit ThreadFuture(ThreadSingleAssignmentVar<T>* sav) : sav(sav) {
 		// sav->addref();
 	}
-	ThreadFuture(const ThreadFuture<T>& rhs) : sav(rhs.sav) {
+	explicit(false) ThreadFuture(const ThreadFuture<T>& rhs) : sav(rhs.sav) {
 		if (sav)
 			sav->addref();
 	}
-	ThreadFuture(ThreadFuture<T>&& rhs) noexcept : sav(rhs.sav) { rhs.sav = 0; }
-	ThreadFuture(const T& presentValue) : sav(new ThreadSingleAssignmentVar<T>()) { sav->send(presentValue); }
-	ThreadFuture(Never) : sav(new ThreadSingleAssignmentVar<T>()) {}
-	ThreadFuture(const Error& error) : sav(new ThreadSingleAssignmentVar<T>()) { sav->sendError(error); }
-	ThreadFuture(const ErrorOr<T>& errorOr) : sav(new ThreadSingleAssignmentVar<T>()) {
+	explicit(false) ThreadFuture(ThreadFuture<T>&& rhs) noexcept : sav(rhs.sav) { rhs.sav = 0; }
+	explicit(false) ThreadFuture(const T& presentValue) : sav(new ThreadSingleAssignmentVar<T>()) {
+		sav->send(presentValue);
+	}
+	explicit(false) ThreadFuture(Never) : sav(new ThreadSingleAssignmentVar<T>()) {}
+	explicit(false) ThreadFuture(const Error& error) : sav(new ThreadSingleAssignmentVar<T>()) {
+		sav->sendError(error);
+	}
+	explicit(false) ThreadFuture(const ErrorOr<T>& errorOr) : sav(new ThreadSingleAssignmentVar<T>()) {
 		if (errorOr.isError()) {
 			sav->sendError(errorOr.getError());
 		} else {
@@ -661,7 +666,7 @@ struct CompletionCallback final : public ThreadCallback, ReferenceCounted<Comple
 	// Holds own reference to prevent deletion until callback is fired
 	Reference<CompletionCallback<T>> self;
 
-	CompletionCallback(ThreadFuture<T> threadFuture) { this->threadFuture = threadFuture; }
+	explicit CompletionCallback(ThreadFuture<T> threadFuture) { this->threadFuture = threadFuture; }
 
 	bool canFire(int notMadeActive) const override { return true; }
 
@@ -779,14 +784,14 @@ template <typename T>
 struct allow_anonymous_future<Optional<Standalone<T>>> : std::false_type {};
 
 template <class T>
-typename std::enable_if<allow_anonymous_future<T>::value, Future<T>>::type safeThreadFutureToFuture(
-    const ThreadFuture<T>& threadFuture) {
+    requires(allow_anonymous_future<T>::value)
+Future<T> safeThreadFutureToFuture(const ThreadFuture<T>& threadFuture) {
 	return safeThreadFutureToFutureImpl(threadFuture);
 }
 
 template <class T>
-typename std::enable_if<!allow_anonymous_future<T>::value, Future<T>>::type safeThreadFutureToFuture(
-    ThreadFuture<T>& threadFuture) {
+    requires(!allow_anonymous_future<T>::value)
+Future<T> safeThreadFutureToFuture(ThreadFuture<T>& threadFuture) {
 	Future<T> f = safeThreadFutureToFutureImpl(threadFuture);
 	if (BUGGIFY) {
 		return removeArenaFromStandalone(f);
@@ -795,15 +800,15 @@ typename std::enable_if<!allow_anonymous_future<T>::value, Future<T>>::type safe
 }
 
 template <class T>
-typename std::enable_if<allow_anonymous_future<T>::value, Future<T>>::type safeThreadFutureToFuture(
-    const Future<T>& future) {
+    requires(allow_anonymous_future<T>::value)
+Future<T> safeThreadFutureToFuture(const Future<T>& future) {
 	// Do nothing
 	return future;
 }
 
 template <class T>
-typename std::enable_if<!allow_anonymous_future<T>::value, Future<T>>::type safeThreadFutureToFuture(
-    Future<T>& future) {
+    requires(!allow_anonymous_future<T>::value)
+Future<T> safeThreadFutureToFuture(Future<T>& future) {
 	if (BUGGIFY) {
 		return removeArenaFromStandalone(future);
 	}
@@ -865,7 +870,7 @@ public:
 	};
 
 	ThreadSafeAsyncVar() : value(), nextChange(new ThreadSingleAssignmentVar<Void>()) {}
-	ThreadSafeAsyncVar(V const& v) : value(v), nextChange(new ThreadSingleAssignmentVar<Void>()) {}
+	explicit ThreadSafeAsyncVar(V const& v) : value(v), nextChange(new ThreadSingleAssignmentVar<Void>()) {}
 
 	State get() {
 		ThreadSpinLockHolder holder(lock);
@@ -918,14 +923,18 @@ public:
 		ASSERT(sav->isReady());
 		// sav->addref();
 	}
-	ThreadResult(const ThreadResult<T>& rhs) : sav(rhs.sav) {
+	explicit(false) ThreadResult(const ThreadResult<T>& rhs) : sav(rhs.sav) {
 		if (sav)
 			sav->addref();
 	}
-	ThreadResult(ThreadResult<T>&& rhs) noexcept : sav(rhs.sav) { rhs.sav = 0; }
-	ThreadResult(const T& presentValue) : sav(new ThreadSingleAssignmentVar<T>()) { sav->send(presentValue); }
-	ThreadResult(const Error& error) : sav(new ThreadSingleAssignmentVar<T>()) { sav->sendError(error); }
-	ThreadResult(const ErrorOr<T> errorOr) : sav(new ThreadSingleAssignmentVar<T>()) {
+	explicit(false) ThreadResult(ThreadResult<T>&& rhs) noexcept : sav(rhs.sav) { rhs.sav = 0; }
+	explicit(false) ThreadResult(const T& presentValue) : sav(new ThreadSingleAssignmentVar<T>()) {
+		sav->send(presentValue);
+	}
+	explicit(false) ThreadResult(const Error& error) : sav(new ThreadSingleAssignmentVar<T>()) {
+		sav->sendError(error);
+	}
+	explicit(false) ThreadResult(const ErrorOr<T> errorOr) : sav(new ThreadSingleAssignmentVar<T>()) {
 		if (errorOr.isError()) {
 			sav->sendError(errorOr.getError());
 		} else {

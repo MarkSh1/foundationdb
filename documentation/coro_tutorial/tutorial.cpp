@@ -24,7 +24,7 @@
 #include "flow/DeterministicRandom.h"
 #include "fdbclient/NativeAPI.actor.h"
 #include "fdbclient/ReadYourWrites.h"
-#include "flow/TLSConfig.actor.h"
+#include "flow/TLSConfig.h"
 #include "fdbrpc/Net2FileSystem.h"
 #include <functional>
 #include <unordered_map>
@@ -194,8 +194,7 @@ Future<Void> echoServer() {
 			          [&requests](StreamRequest const& req) {
 				          requests.add([](StreamRequest req) -> Future<Void> {
 					          req.reply.setByteLimit(1024);
-					          int i = 0;
-					          for (; i < 100; ++i) {
+					          for (int i = 0; i < 100; ++i) {
 						          co_await req.reply.onReady();
 						          std::cout << "Send " << i << std::endl;
 						          req.reply.send(StreamReply{ i });
@@ -439,7 +438,7 @@ Future<Void> fdbClientStream() {
 			                                        GetRangeLimits());
 			loop {
 				Standalone<RangeResultRef> range = co_await results.getFuture();
-				if (range.size()) {
+				if (!range.empty()) {
 					bytes += range.expectedSize();
 					next = keyAfter(range.back().key);
 				}
@@ -555,17 +554,6 @@ Future<Void> fdbClient() {
 	}
 }
 
-Future<Void> fdbStatusStresser() {
-	Database db = Database::createDatabase(clusterFile, 300);
-	Key statusJson(std::string("\xff\xff/status/json"));
-	loop {
-		co_await runRYWTransaction(db, [&statusJson](ReadYourWritesTransaction* tr) -> Future<Void> {
-			co_await tr->get(statusJson);
-			co_return;
-		});
-	}
-}
-
 AsyncGenerator<Optional<StringRef>> readBlocks(Reference<IAsyncFile> file, int64_t blockSize) {
 	auto sz = co_await file->size();
 	decltype(sz) offset = 0;
@@ -646,9 +634,8 @@ std::unordered_map<std::string, std::function<Future<Void>()>> actors = {
 	{ "fdbClientStream", &fdbClientStream }, // ./tutorial -C $CLUSTER_FILE_PATH fdbClientStream
 	{ "fdbClientGetRange", &fdbClientGetRange }, // ./tutorial -C $CLUSTER_FILE_PATH fdbClientGetRange
 	{ "fdbClient", &fdbClient }, // ./tutorial -C $CLUSTER_FILE_PATH fdbClient
-	{ "fdbStatusStresser", &fdbStatusStresser },
 	{ "testReadLines", &testReadLines }
-}; // ./tutorial -C $CLUSTER_FILE_PATH fdbStatusStresser
+};
 
 int main(int argc, char* argv[]) {
 	bool isServer = false;

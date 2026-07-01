@@ -26,7 +26,55 @@
 #include "flow/IndexedSet.h"
 #include "fdbclient/FDBTypes.h"
 #include "flow/IRandom.h"
-#include "fdbclient/VersionedMap.actor.h"
+#include <unordered_set>
+
+// Drains old PTree roots without recursive Reference destruction, including if
+// the cleanup coroutine is cancelled while suspended at yield().
+template <class Tree>
+class DeferredCleanupWorklist {
+public:
+	explicit DeferredCleanupWorklist(std::vector<Tree>&& toFree) : toFree(std::move(toFree)) {}
+	~DeferredCleanupWorklist() { drain(); }
+
+	bool empty() const { return toFree.empty(); }
+	void cleanupOne() {
+		Tree a = std::move(toFree.back());
+		toFree.pop_back();
+
+		auto* node = a.extractPtr();
+		if (node == nullptr || !node->delref_no_destroy()) {
+			return;
+		}
+
+		for (auto& child : node->pointer) {
+			if (child) {
+				toFree.push_back(std::move(child));
+			}
+		}
+		delete node;
+	}
+
+private:
+	void drain() {
+		while (!toFree.empty()) {
+			cleanupOne();
+		}
+	}
+
+	std::vector<Tree> toFree;
+};
+
+template <class Tree>
+Future<Void> deferredCleanupActor(std::vector<Tree> toFree, TaskPriority taskID = TaskPriority::DefaultYield) {
+	DeferredCleanupWorklist<Tree> cleanup(std::move(toFree));
+	int freeCount = 0;
+	while (!cleanup.empty()) {
+		cleanup.cleanupOne();
+
+		if (++freeCount % 100 == 0)
+			co_await yield(taskID);
+	}
+}
 
 // PTree is a persistent balanced binary tree implementation. It is based on a treap as a way to guarantee O(1) space
 // for node insertion (rotating is asymptotically cheap), but the constant factors are very large.
@@ -63,6 +111,9 @@ struct PTree : public ReferenceCounted<PTree<T>>, FastAllocated<PTree<T>>, NonCo
 	PTree(const T& data, Version ver) : lastUpdateVersion(ver), updated(false), data(data) {
 		priority = deterministicRandom()->randomUInt32();
 	}
+	PTree(const T& data, Version ver, IRandom& random) : lastUpdateVersion(ver), updated(false), data(data) {
+		priority = random.randomUInt32();
+	}
 	PTree(uint32_t pri, T const& data, Reference<PTree> const& left, Reference<PTree> const& right, Version ver)
 	  : priority(pri), lastUpdateVersion(ver), updated(false), data(data) {
 		pointer[0] = left;
@@ -70,7 +121,7 @@ struct PTree : public ReferenceCounted<PTree<T>>, FastAllocated<PTree<T>>, NonCo
 	}
 
 private:
-	PTree(PTree const&);
+	explicit(false) PTree(PTree const&);
 };
 
 template <class T>
@@ -79,8 +130,8 @@ class PTreeFinger {
 	// This finger size supports trees with up to exp(96/4.3) ~= 4,964,514,749 entries.
 	// The number 4.3 comes from here: https://en.wikipedia.org/wiki/Random_binary_tree#The_longest_path
 	// see also: check().
-	static constexpr size_t N = 96;
-	PTreeFingerEntry entries_[N];
+	static constexpr size_t pathCapacity = 96;
+	PTreeFingerEntry entries_[pathCapacity];
 	size_t size_ = 0;
 	size_t bound_sz_ = 0;
 
@@ -88,8 +139,8 @@ public:
 	PTreeFinger() {}
 
 	// Explicit copy constructors ensure we copy the live values in entries_.
-	PTreeFinger(PTreeFinger const& f) { *this = f; }
-	PTreeFinger(PTreeFinger&& f) { *this = f; }
+	explicit(false) PTreeFinger(PTreeFinger const& f) { *this = f; }
+	explicit(false) PTreeFinger(PTreeFinger&& f) { *this = f; }
 
 	PTreeFinger& operator=(PTreeFinger const& f) {
 		size_ = f.size_;
@@ -113,12 +164,12 @@ public:
 
 	void resize(size_t sz) {
 		size_ = sz;
-		ASSERT(size_ < N);
+		ASSERT(size_ < pathCapacity);
 	}
 
 	void push_back(PTree<T> const* node) {
 		entries_[size_++] = { node };
-		ASSERT(size_ < N);
+		ASSERT(size_ < pathCapacity);
 	}
 
 	void push_for_bound(PTree<T> const* node, bool less) {
@@ -279,24 +330,31 @@ T get(PTreeFinger<T>& f) {
 	return f.back()->data;
 }
 
-// Modifies p to point to a PTree with x inserted
+// Modifies p to point to a PTree with x inserted, using a caller-owned priority generator.
 template <class T>
-void insert(Reference<PTree<T>>& p, Version at, const T& x) {
+void insert(Reference<PTree<T>>& p, Version at, const T& x, IRandom& priorityRandom) {
 	if (!p) {
-		p = makeReference<PTree<T>>(x, at);
+		p = makeReference<PTree<T>>(x, at, priorityRandom);
 	} else {
 		int c = ::compare(x, p->data);
 		if (c == 0) {
 			p = makeReference<PTree<T>>(p->priority, x, p->left(at), p->right(at), at);
 		} else {
-			const bool direction = !(c < 0);
+			const bool direction = c >= 0;
 			Reference<PTree<T>> child = p->child(direction, at);
-			insert(child, at, x);
+			insert(child, at, x, priorityRandom);
 			p = update(p, direction, child, at);
 			if (p->child(direction, at)->priority > p->priority)
 				rotate(p, at, !direction);
 		}
 	}
+}
+
+// Modifies p to point to a PTree with x inserted.
+template <class T>
+void insert(Reference<PTree<T>>& p, Version at, const T& x) {
+	auto priorityRandom = deterministicRandom();
+	insert(p, at, x, *priorityRandom);
 }
 
 template <class T>
@@ -338,12 +396,16 @@ void last(const Reference<PTree<T>>& p, Version at, PTreeFinger<T>& f) {
 // modifies p to point to a PTree with the root of p removed
 template <class T>
 void removeRoot(Reference<PTree<T>>& p, Version at) {
-	if (!p->right(at))
+	const auto& right = p->right(at);
+	if (!right)
 		p = p->left(at);
-	else if (!p->left(at))
-		p = p->right(at);
 	else {
-		bool direction = p->right(at)->priority < p->left(at)->priority;
+		const auto& left = p->left(at);
+		if (!left) {
+			p = right;
+			return;
+		}
+		bool direction = right->priority < left->priority;
 		rotate(p, at, direction);
 		Reference<PTree<T>> child = p->child(direction, at);
 		removeRoot(child, at);
@@ -473,11 +535,13 @@ void demoteRoot(Reference<PTree<T>>& p, Version at) {
 		ASSERT(false);
 
 	uint32_t priority[2];
-	for (int i = 0; i < 2; i++)
-		if (p->child(i, at))
-			priority[i] = p->child(i, at)->priority;
+	for (int i = 0; i < 2; i++) {
+		const auto& child = p->child(i, at);
+		if (child)
+			priority[i] = child->priority;
 		else
 			priority[i] = 0;
+	}
 
 	bool higherDirection = priority[1] > priority[0];
 
@@ -498,7 +562,7 @@ Reference<PTree<T>> append(const Reference<PTree<T>>& left, const Reference<PTre
 	if (!right)
 		return left;
 
-	Reference<PTree<T>> r = makeReference<PTree<T>>(lastNode(left, at)->data, at);
+	auto r = makeReference<PTree<T>>(lastNode(left, at)->data, at);
 	if (EXPENSIVE_VALIDATION) {
 		ASSERT(r->data < firstNode(right, at)->data);
 	}
@@ -613,8 +677,11 @@ void check(const Reference<PTree<T>>& p) {
 // This essentially gets rid of node versions that will never be read (beyond 5s worth of versions)
 // TODO look into making this per-version compaction. (We could keep track of updated nodes at each version for example)
 template <class T>
-void compact(Reference<PTree<T>>& p, Version newOldestVersion) {
+void compact(Reference<PTree<T>>& p, Version newOldestVersion, std::unordered_set<PTree<T>*>& visited) {
 	if (!p) {
+		return;
+	}
+	if (!visited.insert(p.getPtr()).second) {
 		return;
 	}
 	if (p->updated && p->lastUpdateVersion <= newOldestVersion) {
@@ -629,8 +696,14 @@ void compact(Reference<PTree<T>>& p, Version newOldestVersion) {
 	}
 	Reference<PTree<T>> left = p->left(newOldestVersion);
 	Reference<PTree<T>> right = p->right(newOldestVersion);
-	compact(left, newOldestVersion);
-	compact(right, newOldestVersion);
+	compact(left, newOldestVersion, visited);
+	compact(right, newOldestVersion, visited);
+}
+
+template <class T>
+void compact(Reference<PTree<T>>& p, Version newOldestVersion) {
+	std::unordered_set<PTree<T>*> visited;
+	compact(p, newOldestVersion, visited);
 }
 
 } // namespace PTreeImpl
@@ -670,6 +743,7 @@ public:
 	typedef Reference<PTreeT> Tree;
 
 	Version oldestVersion, latestVersion;
+	Reference<IRandom> priorityRandom;
 
 	// This deque keeps track of PTree root nodes at various versions. Since the
 	// versions increase monotonically, the deque is implicitly sorted and hence
@@ -691,12 +765,16 @@ public:
 	static const int overheadPerItem = nextFastAllocatedSize(sizeof(PTreeT)) * 4;
 	struct iterator;
 
-	VersionedMap() : oldestVersion(0), latestVersion(0) { roots.emplace_back(0, Tree()); }
-	VersionedMap(VersionedMap&& v) noexcept
-	  : oldestVersion(v.oldestVersion), latestVersion(v.latestVersion), roots(std::move(v.roots)) {}
+	VersionedMap() : oldestVersion(0), latestVersion(0), priorityRandom(deterministicRandom()) {
+		roots.emplace_back(0, Tree());
+	}
+	explicit(false) VersionedMap(VersionedMap&& v) noexcept
+	  : oldestVersion(v.oldestVersion), latestVersion(v.latestVersion), priorityRandom(std::move(v.priorityRandom)),
+	    roots(std::move(v.roots)) {}
 	void operator=(VersionedMap&& v) noexcept {
 		oldestVersion = v.oldestVersion;
 		latestVersion = v.latestVersion;
+		priorityRandom = std::move(v.priorityRandom);
 		roots = std::move(v.roots);
 	}
 
@@ -770,8 +848,10 @@ public:
 	// insert() and erase() invalidate atLatest() and all iterators into it
 	void insert(const K& k, const T& t) { insert(k, t, latestVersion); }
 	void insert(const K& k, const T& t, Version insertAt) {
-		PTreeImpl::insert(
-		    roots.back().second, latestVersion, MapPair<K, std::pair<T, Version>>(k, std::make_pair(t, insertAt)));
+		PTreeImpl::insert(roots.back().second,
+		                  latestVersion,
+		                  MapPair<K, std::pair<T, Version>>(k, std::make_pair(t, insertAt)),
+		                  *priorityRandom);
 	}
 	void erase(const K& begin, const K& end) { PTreeImpl::remove(roots.back().second, latestVersion, begin, end); }
 	void erase(const K& key) { // key must be present
@@ -790,9 +870,10 @@ public:
 		ASSERT(newOldestVersion <= latestVersion);
 		// auto newBegin = roots.lower_bound(newOldestVersion);
 		auto newBegin = lower_bound(roots.begin(), roots.end(), newOldestVersion, rootsComparator());
+		std::unordered_set<PTreeT*> visited;
 		for (auto root = roots.begin(); root != newBegin; ++root) {
 			if (root->second)
-				PTreeImpl::compact(root->second, newOldestVersion);
+				PTreeImpl::compact(root->second, newOldestVersion, visited);
 		}
 		// printf("\nPrinting the tree at latest version after compaction.\n");
 		// PTreeImpl::printTreeDetails(roots.back().second(), 0);
@@ -843,60 +924,127 @@ public:
 		PTreeFingerT finger;
 	};
 
+	static iterator beginAt(Tree const& root, Version at) {
+		iterator i(root, at);
+		PTreeImpl::first(root, at, i.finger);
+		return i;
+	}
+
+	static iterator endAt(Tree const& root, Version at) { return iterator(root, at); }
+
+	// Returns x such that key==*x, or end()
+	template <class X>
+	static iterator findAt(Tree const& root, Version at, const X& key) {
+		iterator i(root, at);
+		PTreeImpl::lower_bound(root, at, key, i.finger);
+		if (i && i.key() == key)
+			return i;
+		else
+			return endAt(root, at);
+	}
+
+	// Returns the smallest x such that *x>=key, or end()
+	template <class X>
+	static iterator lowerBoundAt(Tree const& root, Version at, const X& key) {
+		iterator i(root, at);
+		PTreeImpl::lower_bound(root, at, key, i.finger);
+		return i;
+	}
+
+	// Returns the smallest x such that *x>key, or end()
+	template <class X>
+	static iterator upperBoundAt(Tree const& root, Version at, const X& key) {
+		iterator i(root, at);
+		PTreeImpl::upper_bound(root, at, key, i.finger);
+		return i;
+	}
+
+	// Returns the largest x such that *x<=key, or end()
+	template <class X>
+	static iterator lastLessOrEqualAt(Tree const& root, Version at, const X& key) {
+		iterator i(root, at);
+		PTreeImpl::upper_bound(root, at, key, i.finger);
+		--i;
+		return i;
+	}
+
+	// Returns the largest x such that *x<key, or end()
+	template <class X>
+	static iterator lastLessAt(Tree const& root, Version at, const X& key) {
+		iterator i(root, at);
+		PTreeImpl::lower_bound(root, at, key, i.finger);
+		--i;
+		return i;
+	}
+
+	iterator latestBegin() const { return beginAt(roots.back().second, latestVersion); }
+	iterator latestEnd() const { return endAt(roots.back().second, latestVersion); }
+
+	// Returns x such that key==*x, or latestEnd()
+	template <class X>
+	iterator latestFind(const X& key) const {
+		return findAt(roots.back().second, latestVersion, key);
+	}
+
+	// Returns the smallest x such that *x>=key, or latestEnd()
+	template <class X>
+	iterator latestLowerBound(const X& key) const {
+		return lowerBoundAt(roots.back().second, latestVersion, key);
+	}
+
+	// Returns the smallest x such that *x>key, or latestEnd()
+	template <class X>
+	iterator latestUpperBound(const X& key) const {
+		return upperBoundAt(roots.back().second, latestVersion, key);
+	}
+
+	// Returns the largest x such that *x<=key, or latestEnd()
+	template <class X>
+	iterator latestLastLessOrEqual(const X& key) const {
+		return lastLessOrEqualAt(roots.back().second, latestVersion, key);
+	}
+
+	// Returns the largest x such that *x<key, or latestEnd()
+	template <class X>
+	iterator latestLastLess(const X& key) const {
+		return lastLessAt(roots.back().second, latestVersion, key);
+	}
+
 	class ViewAtVersion {
 	public:
 		ViewAtVersion(Tree const& root, Version at) : root(root), at(at) {}
 
-		iterator begin() const {
-			iterator i(root, at);
-			PTreeImpl::first(root, at, i.finger);
-			return i;
-		}
-		iterator end() const { return iterator(root, at); }
+		iterator begin() const { return VersionedMap::beginAt(root, at); }
+		iterator end() const { return VersionedMap::endAt(root, at); }
 
 		// Returns x such that key==*x, or end()
 		template <class X>
 		iterator find(const X& key) const {
-			iterator i(root, at);
-			PTreeImpl::lower_bound(root, at, key, i.finger);
-			if (i && i.key() == key)
-				return i;
-			else
-				return end();
+			return VersionedMap::findAt(root, at, key);
 		}
 
 		// Returns the smallest x such that *x>=key, or end()
 		template <class X>
 		iterator lower_bound(const X& key) const {
-			iterator i(root, at);
-			PTreeImpl::lower_bound(root, at, key, i.finger);
-			return i;
+			return VersionedMap::lowerBoundAt(root, at, key);
 		}
 
 		// Returns the smallest x such that *x>key, or end()
 		template <class X>
 		iterator upper_bound(const X& key) const {
-			iterator i(root, at);
-			PTreeImpl::upper_bound(root, at, key, i.finger);
-			return i;
+			return VersionedMap::upperBoundAt(root, at, key);
 		}
 
 		// Returns the largest x such that *x<=key, or end()
 		template <class X>
 		iterator lastLessOrEqual(const X& key) const {
-			iterator i(root, at);
-			PTreeImpl::upper_bound(root, at, key, i.finger);
-			--i;
-			return i;
+			return VersionedMap::lastLessOrEqualAt(root, at, key);
 		}
 
 		// Returns the largest x such that *x<key, or end()
 		template <class X>
 		iterator lastLess(const X& key) const {
-			iterator i(root, at);
-			PTreeImpl::lower_bound(root, at, key, i.finger);
-			--i;
-			return i;
+			return VersionedMap::lastLessAt(root, at, key);
 		}
 
 		void validate() {

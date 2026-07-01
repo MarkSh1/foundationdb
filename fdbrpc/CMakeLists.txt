@@ -1,4 +1,5 @@
 fdb_find_sources(FDBRPC_SRCS)
+list(REMOVE_ITEM FDBRPC_SRCS LinkTest.cpp)
 
 set(COMPILE_EIO OFF)
 
@@ -26,7 +27,7 @@ add_flow_target(STATIC_LIBRARY NAME fdbrpc_sampling
   DISABLE_ACTOR_DIAGNOSTICS ${FDBRPC_SRCS_DISABLE_ACTOR_DIAGNOSTICS})
 
 add_flow_target(LINK_TEST NAME fdbrpclinktest SRCS LinkTest.cpp)
-target_link_libraries(fdbrpclinktest PRIVATE fdbrpc rapidjson)
+target_link_libraries(fdbrpclinktest PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,fdbrpc>" rapidjson)
 target_include_directories(fdbrpclinktest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libeio)
 
 if(COMPILE_EIO)
@@ -60,8 +61,13 @@ if(${COROUTINE_IMPL} STREQUAL libcoro)
   endif()
 endif()
 
-target_include_directories(fdbrpc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(fdbrpc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/include" PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libeio)
+target_include_directories(fdbrpc
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_BINARY_DIR}/include"
+  PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libeio")
 target_link_libraries(fdbrpc PUBLIC flow libb64 md5 PRIVATE rapidjson)
 
 if (WITH_GRPC)
@@ -78,7 +84,13 @@ if (WITH_GRPC)
   target_link_libraries(fdbrpc_sampling PUBLIC proto_fdbrpc_test proto_fdbrpc_file_transfer)
 endif()
 
-target_include_directories(fdbrpc_sampling PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_BINARY_DIR}/include" PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libeio)
+target_include_directories(fdbrpc_sampling
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_BINARY_DIR}/include"
+  PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libeio")
 target_link_libraries(fdbrpc_sampling PUBLIC flow_sampling libb64 md5 PRIVATE rapidjson)
 
 if(${COROUTINE_IMPL} STREQUAL libcoro)
@@ -94,6 +106,11 @@ endif()
 target_compile_definitions(fdbrpc_sampling PRIVATE -DENABLE_SAMPLING)
 if(WIN32)
   add_dependencies(fdbrpc_sampling_actors fdbrpc_actors)
+endif()
+
+if(NOT FOUNDATIONDB_CROSS_COMPILING) # FIXME(swift): make this work when
+                                     # x-compiling.
+  add_subdirectory(bench EXCLUDE_FROM_ALL)
 endif()
 
 add_subdirectory(tests)

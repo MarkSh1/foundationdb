@@ -36,9 +36,163 @@ namespace n_coroutine = ::std::experimental;
 
 #include "flow/flow.h"
 #include "flow/Error.h"
-#include "flow/CoroutinesImpl.h"
 
 struct Uncancellable {};
+
+// Marker parameter for coroutines that should destroy the coroutine frame on
+// cancellation instead of resuming it to throw actor_cancelled(). Coroutine
+// locals are cleaned up by RAII and catch blocks inside the coroutine are not
+// run for cancellation.
+struct NoThrowOnCancel {};
+
+// Marker parameter for coroutines that want `co_await Future<Void>` to
+// produce a value convertible to `Void` instead of `void`:
+//
+//   Future<Void> f(Future<Void> ready, ExplicitVoid = {}) {
+//     Void v = co_await ready;
+//     co_return;
+//   }
+//
+// Unmarked coroutines resume with co_await Future<Void>` -> `void`
+struct ExplicitVoid {
+	operator Void() const { return Void(); }
+};
+
+template <class T>
+class AsyncResult;
+
+namespace coro {
+template <class T>
+struct FutureIgnore;
+
+template <class SourceValue, class ResultValue = std::conditional_t<std::is_void_v<SourceValue>, Void, SourceValue>>
+struct FutureErrorOr;
+
+template <class T>
+struct AsyncResultState;
+
+template <class T>
+struct AsyncResultCallback;
+
+template <class T, bool IsCancellable, bool ReturnsExplicitVoid = false, bool NoThrowOnCancel = false>
+struct AsyncResultPromise;
+
+template <class PromiseType, class ValueType>
+struct AwaitableAsyncResult;
+
+template <class ValueType>
+struct AsyncResultAwaiter;
+
+template <class Parent, int Idx, class ValueType>
+struct ActorAsyncResultCallback;
+
+template <class ValueType>
+struct QuorumAsyncResultCallback;
+
+template <class ValueType>
+struct GetAllAsyncResultCallback;
+
+template <class PromiseType, class ValueType>
+struct AwaitableFutureIgnore;
+
+template <class PromiseType, class SourceValue, class ResultValue>
+struct AwaitableFutureErrorOr;
+} // namespace coro
+
+namespace coro {
+
+template <class T>
+struct FutureIgnore {
+	// Wrap a Future<T> so coroutine await_transform can resume on completion
+	// without materializing the T payload at the await site.
+	Future<T> future;
+};
+
+template <class T>
+FutureIgnore<T> ignore(Future<T> future) {
+	return FutureIgnore<T>{ std::move(future) };
+}
+
+template <class SourceValue, class ResultValue>
+struct FutureErrorOr {
+	// Reuse Future<T> storage but request a non-throwing await_resume() that
+	// converts completion into ErrorOr<ResultValue>.
+	Future<std::conditional_t<std::is_void_v<SourceValue>, Void, SourceValue>> future;
+};
+
+template <class T>
+FutureErrorOr<T> errorOr(Future<T> future) {
+	return FutureErrorOr<T>{ std::move(future) };
+}
+
+template <class T>
+FutureErrorOr<T, Void> errorOr(FutureIgnore<T> future) {
+	return FutureErrorOr<T, Void>{ std::move(future.future) };
+}
+
+} // namespace coro
+
+// Move-only coroutine result that transfers ownership through co_await.
+// Unlike Future<T>, awaiting AsyncResult<T> produces T by value so expensive
+// payloads do not need an extra copy at the await site.
+template <class T>
+class SWIFT_SENDABLE AsyncResult {
+public:
+	static_assert(!std::is_void_v<T>, "Use AsyncResult<Void> instead of AsyncResult<void>");
+	using Element = T;
+	using StoredT = T;
+
+	AsyncResult() noexcept : resultState(nullptr) {}
+	AsyncResult(AsyncResult const&) = delete;
+	AsyncResult& operator=(AsyncResult const&) = delete;
+	AsyncResult(AsyncResult&& rhs) noexcept : resultState(rhs.resultState) { rhs.resultState = nullptr; }
+	AsyncResult& operator=(AsyncResult&& rhs) noexcept {
+		if (this != &rhs) {
+			release();
+			resultState = rhs.resultState;
+			rhs.resultState = nullptr;
+		}
+		return *this;
+	}
+	~AsyncResult() { release(); }
+
+	bool isValid() const { return resultState != nullptr; }
+	bool isReady() const;
+	bool isError() const;
+	bool canGet() const;
+	Error& getError() const;
+	void cancel() const;
+	void addCallbackAndClear(coro::AsyncResultCallback<StoredT>* cb) &&;
+
+	T const& get() const&;
+	T get() &&;
+	T getValue() const& { return get(); }
+	T getValue() && { return std::move(*this).get(); }
+
+	auto operator co_await() &;
+	auto operator co_await() &&;
+
+private:
+	explicit AsyncResult(coro::AsyncResultState<StoredT>* resultState) noexcept : resultState(resultState) {}
+	void release();
+
+	coro::AsyncResultState<StoredT>* resultState;
+
+	template <class U, bool IsCancellable, bool ReturnsExplicitVoid, bool NoThrowOnCancel>
+	friend struct coro::AsyncResultPromise;
+	template <class PromiseType, class ValueType>
+	friend struct coro::AwaitableAsyncResult;
+	template <class ValueType>
+	friend struct coro::AsyncResultAwaiter;
+	template <class Parent, int Idx, class ValueType>
+	friend struct coro::ActorAsyncResultCallback;
+	template <class ValueType>
+	friend struct coro::QuorumAsyncResultCallback;
+	template <class ValueType>
+	friend struct coro::GetAllAsyncResultCallback;
+};
+
+#include "flow/CoroutinesImpl.h"
 
 template <class T>
 class AsyncGenerator {
@@ -87,12 +241,12 @@ private:
 public:
 	explicit Generator(handle_type h) : handle(h) {}
 	Generator() {}
-	Generator(Generator const& other) : handle(other.handle) {
+	explicit(false) Generator(Generator const& other) : handle(other.handle) {
 		if (handle) {
 			handle.promise().addRef();
 		}
 	}
-	Generator(Generator&& other) : handle(std::move(other.handle)) { other.handle = handle_type{}; }
+	explicit(false) Generator(Generator&& other) : handle(std::move(other.handle)) { other.handle = handle_type{}; }
 	~Generator() {
 		if (handle) {
 			handle.promise().delRef();
@@ -155,13 +309,97 @@ public:
 
 template <typename ReturnValue, typename... Args>
 struct [[maybe_unused]] n_coroutine::coroutine_traits<Future<ReturnValue>, Args...> {
-	using promise_type = coro::CoroPromise<ReturnValue, !coro::hasUncancellable<Args...>>;
+	static_assert(!(coro::hasUncancellable<Args...> && coro::hasNoThrowOnCancel<Args...>),
+	              "NoThrowOnCancel and Uncancellable are mutually exclusive");
+	using promise_type = coro::CoroPromise<ReturnValue,
+	                                       !coro::hasUncancellable<Args...>,
+	                                       coro::hasExplicitVoid<Args...>,
+	                                       coro::hasNoThrowOnCancel<Args...>>;
+};
+
+template <typename ReturnValue, typename... Args>
+struct [[maybe_unused]] n_coroutine::coroutine_traits<AsyncResult<ReturnValue>, Args...> {
+	static_assert(!(coro::hasUncancellable<Args...> && coro::hasNoThrowOnCancel<Args...>),
+	              "NoThrowOnCancel and Uncancellable are mutually exclusive");
+	using promise_type = coro::AsyncResultPromise<ReturnValue,
+	                                              !coro::hasUncancellable<Args...>,
+	                                              coro::hasExplicitVoid<Args...>,
+	                                              coro::hasNoThrowOnCancel<Args...>>;
 };
 
 template <typename ReturnValue, typename... Args>
 struct [[maybe_unused]] n_coroutine::coroutine_traits<AsyncGenerator<ReturnValue>, Args...> {
 	static_assert(!coro::hasUncancellable<Args...>, "AsyncGenerator can't be uncancellable");
-	using promise_type = coro::AsyncGeneratorPromise<ReturnValue>;
+	static_assert(!coro::hasNoThrowOnCancel<Args...>, "AsyncGenerator can't use NoThrowOnCancel");
+	using promise_type = coro::AsyncGeneratorPromise<ReturnValue, coro::hasExplicitVoid<Args...>>;
 };
+
+template <class T>
+bool AsyncResult<T>::isReady() const {
+	return resultState && resultState->isReady();
+}
+
+template <class T>
+bool AsyncResult<T>::isError() const {
+	return resultState && resultState->isError();
+}
+
+template <class T>
+bool AsyncResult<T>::canGet() const {
+	return resultState && resultState->canGet();
+}
+
+template <class T>
+Error& AsyncResult<T>::getError() const {
+	ASSERT(resultState);
+	return resultState->getError();
+}
+
+template <class T>
+void AsyncResult<T>::cancel() const {
+	if (resultState) {
+		resultState->cancelProducer();
+	}
+}
+
+template <class T>
+void AsyncResult<T>::addCallbackAndClear(coro::AsyncResultCallback<StoredT>* cb) && {
+	ASSERT(resultState);
+	resultState->registerCallback(cb);
+	resultState = nullptr;
+}
+
+template <class T>
+T const& AsyncResult<T>::get() const& {
+	ASSERT(resultState);
+	return resultState->get();
+}
+
+template <class T>
+T AsyncResult<T>::get() && {
+	ASSERT(resultState);
+	return resultState->take();
+}
+
+template <class T>
+auto AsyncResult<T>::operator co_await() & {
+	return coro::AsyncResultAwaiter<T>{ std::move(*this) };
+}
+
+template <class T>
+auto AsyncResult<T>::operator co_await() && {
+	return coro::AsyncResultAwaiter<T>{ std::move(*this) };
+}
+
+template <class T>
+void AsyncResult<T>::release() {
+	if (resultState) {
+		if (!resultState->isReady()) {
+			resultState->cancelProducer();
+		}
+		resultState->delRef();
+		resultState = nullptr;
+	}
+}
 
 #endif // FLOW_COROUTINES_H

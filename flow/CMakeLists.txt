@@ -16,6 +16,7 @@ list(REMOVE_ITEM FLOW_SRCS LinkTest.cpp)
 list(REMOVE_ITEM FLOW_SRCS TLSTest.cpp)
 list(REMOVE_ITEM FLOW_SRCS MkCertCli.cpp)
 list(REMOVE_ITEM FLOW_SRCS acac.cpp)
+list(REMOVE_ITEM FLOW_SRCS FlowTest.cpp)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
   list(APPEND FLOW_SRCS aarch64/memcmp.S aarch64/memcpy.S)
@@ -116,25 +117,33 @@ endif()
 # executable so the linker will throw errors if it can't find the declaration of
 # a symbol.
 add_flow_target(LINK_TEST NAME flowlinktest SRCS LinkTest.cpp)
-target_link_libraries(flowlinktest PRIVATE flow stacktrace)
+target_link_libraries(flowlinktest PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,flow>" stacktrace)
+
+add_flow_target(EXECUTABLE NAME flow_test SRCS FlowTest.cpp)
+set_target_properties(flow_test PROPERTIES EXCLUDE_FROM_ALL TRUE)
+target_link_libraries(flow_test PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,flow>")
 
 set(IS_ARM_MAC NO)
 if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
   set(IS_ARM_MAC YES)
 endif()
 
-foreach(ft flow flow_sampling flowlinktest)
+foreach(ft flow flow_sampling flowlinktest flow_test)
   target_include_directories(
     ${ft}
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
            "${CMAKE_CURRENT_BINARY_DIR}/include"
-           "${CMAKE_SOURCE_DIR}/contrib/libb64/include")
+           "${CMAKE_SOURCE_DIR}/contrib/libb64/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
   if(FLOW_USE_ZSTD)
     target_include_directories(${ft} PRIVATE SYSTEM ${ZSTD_LIB_INCLUDE_DIR})
   endif()
   if(USE_JEMALLOC)
     target_include_directories(${ft} PRIVATE ${jemalloc_INCLUDE_DIRS})
+    if(ft STREQUAL "flowlinktest" OR ft STREQUAL "flow_test")
+      target_link_libraries(${ft} PRIVATE jemalloc::jemalloc)
+    endif()
   endif()
 
   target_link_libraries(${ft} PRIVATE stacktrace)
@@ -199,6 +208,11 @@ else()
   add_executable(mkcert MkCertCli.cpp)
 endif()
 target_link_libraries(mkcert PUBLIC flow)
+
+if(NOT FOUNDATIONDB_CROSS_COMPILING) # FIXME(swift): make this work when
+                                     # x-compiling.
+  add_subdirectory(bench EXCLUDE_FROM_ALL)
+endif()
 
 set(FLOW_BINARY_DIR "${CMAKE_BINARY_DIR}/flow")
 if(WITH_SWIFT)

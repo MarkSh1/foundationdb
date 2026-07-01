@@ -52,6 +52,7 @@ void DatabaseConfiguration::resetInternal() {
 	remoteDesiredTLogCount = -1;
 	remoteTLogReplicationFactor = repopulateRegionAntiQuorum = 0;
 	backupWorkerEnabled = false;
+	rangeBackupWorkerEnabled = false;
 	perpetualStorageWiggleSpeed = 0;
 	perpetualStorageWiggleLocality = "0";
 	storageMigrationType = StorageMigrationType::DEFAULT;
@@ -83,7 +84,7 @@ void parseReplicationPolicy(Reference<IReplicationPolicy>* policy, ValueRef cons
 
 void parse(std::vector<RegionInfo>* regions, ValueRef const& v) {
 	try {
-		StatusObject statusObj = BinaryReader::fromStringRef<StatusObject>(v, IncludeVersion());
+		auto statusObj = BinaryReader::fromStringRef<StatusObject>(v, IncludeVersion());
 		regions->clear();
 		if (statusObj["regions"].type() != json_spirit::array_type) {
 			return;
@@ -122,47 +123,39 @@ void parse(std::vector<RegionInfo>* regions, ValueRef const& v) {
 					info.satelliteTLogReplicationFactor = 1;
 					info.satelliteTLogUsableDcs = 1;
 					info.satelliteTLogWriteAntiQuorum = 0;
-					info.satelliteTLogPolicy = Reference<IReplicationPolicy>(new PolicyOne());
+					info.satelliteTLogPolicy = makeReference<PolicyOne>();
 				} else if (satelliteReplication == "one_satellite_double") {
 					info.satelliteTLogReplicationFactor = 2;
 					info.satelliteTLogUsableDcs = 1;
 					info.satelliteTLogWriteAntiQuorum = 0;
-					info.satelliteTLogPolicy = Reference<IReplicationPolicy>(
-					    new PolicyAcross(2, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+					info.satelliteTLogPolicy = makeReference<PolicyAcross>(2, "zoneid", makeReference<PolicyOne>());
 				} else if (satelliteReplication == "one_satellite_triple") {
 					info.satelliteTLogReplicationFactor = 3;
 					info.satelliteTLogUsableDcs = 1;
 					info.satelliteTLogWriteAntiQuorum = 0;
-					info.satelliteTLogPolicy = Reference<IReplicationPolicy>(
-					    new PolicyAcross(3, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+					info.satelliteTLogPolicy = makeReference<PolicyAcross>(3, "zoneid", makeReference<PolicyOne>());
 				} else if (satelliteReplication == "two_satellite_safe") {
 					info.satelliteTLogReplicationFactor = 4;
 					info.satelliteTLogUsableDcs = 2;
 					info.satelliteTLogWriteAntiQuorum = 0;
-					info.satelliteTLogPolicy = Reference<IReplicationPolicy>(
-					    new PolicyAcross(2,
-					                     "dcid",
-					                     Reference<IReplicationPolicy>(new PolicyAcross(
-					                         2, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())))));
+					info.satelliteTLogPolicy = makeReference<PolicyAcross>(
+					    2, "dcid", makeReference<PolicyAcross>(2, "zoneid", makeReference<PolicyOne>()));
 					info.satelliteTLogReplicationFactorFallback = 2;
 					info.satelliteTLogUsableDcsFallback = 1;
 					info.satelliteTLogWriteAntiQuorumFallback = 0;
-					info.satelliteTLogPolicyFallback = Reference<IReplicationPolicy>(
-					    new PolicyAcross(2, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+					info.satelliteTLogPolicyFallback =
+					    makeReference<PolicyAcross>(2, "zoneid", makeReference<PolicyOne>());
 				} else if (satelliteReplication == "two_satellite_fast") {
 					info.satelliteTLogReplicationFactor = 4;
 					info.satelliteTLogUsableDcs = 2;
 					info.satelliteTLogWriteAntiQuorum = 2;
-					info.satelliteTLogPolicy = Reference<IReplicationPolicy>(
-					    new PolicyAcross(2,
-					                     "dcid",
-					                     Reference<IReplicationPolicy>(new PolicyAcross(
-					                         2, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())))));
+					info.satelliteTLogPolicy = makeReference<PolicyAcross>(
+					    2, "dcid", makeReference<PolicyAcross>(2, "zoneid", makeReference<PolicyOne>()));
 					info.satelliteTLogReplicationFactorFallback = 2;
 					info.satelliteTLogUsableDcsFallback = 1;
 					info.satelliteTLogWriteAntiQuorumFallback = 0;
-					info.satelliteTLogPolicyFallback = Reference<IReplicationPolicy>(
-					    new PolicyAcross(2, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+					info.satelliteTLogPolicyFallback =
+					    makeReference<PolicyAcross>(2, "zoneid", makeReference<PolicyOne>());
 				} else {
 					throw invalid_option();
 				}
@@ -184,27 +177,61 @@ void parse(std::vector<RegionInfo>* regions, ValueRef const& v) {
 
 void DatabaseConfiguration::setDefaultReplicationPolicy() {
 	if (!storagePolicy) {
-		storagePolicy = Reference<IReplicationPolicy>(
-		    new PolicyAcross(storageTeamSize, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+		storagePolicy = makeReference<PolicyAcross>(storageTeamSize, "zoneid", makeReference<PolicyOne>());
 	}
 	if (!tLogPolicy) {
-		tLogPolicy = Reference<IReplicationPolicy>(
-		    new PolicyAcross(tLogReplicationFactor, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+		tLogPolicy = makeReference<PolicyAcross>(tLogReplicationFactor, "zoneid", makeReference<PolicyOne>());
 	}
 	if (remoteTLogReplicationFactor > 0 && !remoteTLogPolicy) {
-		remoteTLogPolicy = Reference<IReplicationPolicy>(
-		    new PolicyAcross(remoteTLogReplicationFactor, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+		remoteTLogPolicy =
+		    makeReference<PolicyAcross>(remoteTLogReplicationFactor, "zoneid", makeReference<PolicyOne>());
 	}
 	for (auto& r : regions) {
 		if (r.satelliteTLogReplicationFactor > 0 && !r.satelliteTLogPolicy) {
-			r.satelliteTLogPolicy = Reference<IReplicationPolicy>(new PolicyAcross(
-			    r.satelliteTLogReplicationFactor, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+			r.satelliteTLogPolicy =
+			    makeReference<PolicyAcross>(r.satelliteTLogReplicationFactor, "zoneid", makeReference<PolicyOne>());
 		}
 		if (r.satelliteTLogReplicationFactorFallback > 0 && !r.satelliteTLogPolicyFallback) {
-			r.satelliteTLogPolicyFallback = Reference<IReplicationPolicy>(new PolicyAcross(
-			    r.satelliteTLogReplicationFactorFallback, "zoneid", Reference<IReplicationPolicy>(new PolicyOne())));
+			r.satelliteTLogPolicyFallback = makeReference<PolicyAcross>(
+			    r.satelliteTLogReplicationFactorFallback, "zoneid", makeReference<PolicyOne>());
 		}
 	}
+}
+
+int32_t DatabaseConfiguration::maxZoneFailuresTolerated(int fullyReplicatedRegions, bool forAvailability) const {
+	int worstSatelliteTLogReplicationFactor = !regions.empty() ? std::numeric_limits<int>::max() : 0;
+	int regionsWithNonNegativePriority = 0;
+	for (auto& r : regions) {
+		if (r.priority >= 0) {
+			regionsWithNonNegativePriority++;
+		}
+		worstSatelliteTLogReplicationFactor = std::min(
+		    worstSatelliteTLogReplicationFactor, r.satelliteTLogReplicationFactor - r.satelliteTLogWriteAntiQuorum);
+		if (r.satelliteTLogUsableDcsFallback > 0) {
+			worstSatelliteTLogReplicationFactor =
+			    std::min(worstSatelliteTLogReplicationFactor,
+			             r.satelliteTLogReplicationFactorFallback - r.satelliteTLogWriteAntiQuorumFallback);
+		}
+	}
+
+	if (worstSatelliteTLogReplicationFactor <= 0) {
+		// HA is not enabled in this database. Return single cluster zone failures to tolerate.
+		return std::min(tLogReplicationFactor - 1 - tLogWriteAntiQuorum, storageTeamSize - 1);
+	}
+
+	// Compute HA enabled database zone failure tolerance.
+	auto isGeoReplicatedData = [this, &fullyReplicatedRegions]() {
+		return usableRegions > 1 && fullyReplicatedRegions > 1;
+	};
+
+	if (isGeoReplicatedData() && (!forAvailability || regionsWithNonNegativePriority > 1)) {
+		return 1 + std::min(std::max(tLogReplicationFactor - 1 - tLogWriteAntiQuorum,
+		                             worstSatelliteTLogReplicationFactor - 1),
+		                    storageTeamSize - 1);
+	}
+	// Primary and Satellite tLogs are synchronously replicated, hence we can lose all but 1.
+	return std::min(tLogReplicationFactor + worstSatelliteTLogReplicationFactor - 1 - tLogWriteAntiQuorum,
+	                storageTeamSize - 1);
 }
 
 bool DatabaseConfiguration::isValid() const {
@@ -233,8 +260,8 @@ bool DatabaseConfiguration::isValid() const {
 	      LOG_TEST(remoteTLogReplicationFactor >= 0) && LOG_TEST(repopulateRegionAntiQuorum >= 0) &&
 	      LOG_TEST(repopulateRegionAntiQuorum <= 1) && LOG_TEST(usableRegions >= 1) && LOG_TEST(usableRegions <= 2) &&
 	      LOG_TEST(regions.size() <= 2) && LOG_TEST((usableRegions == 1 || regions.size() == 2)) &&
-	      LOG_TEST((regions.size() == 0 || regions[0].priority >= 0)) &&
-	      LOG_TEST((regions.size() == 0 || tLogPolicy->info() != "dcid^2 x zoneid^2 x 1")) &&
+	      LOG_TEST((regions.empty() || regions[0].priority >= 0)) &&
+	      LOG_TEST((regions.empty() || tLogPolicy->info() != "dcid^2 x zoneid^2 x 1")) &&
 	      // We cannot specify regions with three_datacenter replication
 	      LOG_TEST((perpetualStorageWiggleSpeed == 0 || perpetualStorageWiggleSpeed == 1)) &&
 	      LOG_TEST(isValidPerpetualStorageWiggleLocality(perpetualStorageWiggleLocality)) &&
@@ -245,9 +272,9 @@ bool DatabaseConfiguration::isValid() const {
 	std::set<Key> dcIds;
 	dcIds.insert(Key());
 	for (auto& r : regions) {
-		if (!(!dcIds.count(r.dcId) && r.satelliteTLogReplicationFactor >= 0 && r.satelliteTLogWriteAntiQuorum >= 0 &&
+		if (!(!dcIds.contains(r.dcId) && r.satelliteTLogReplicationFactor >= 0 && r.satelliteTLogWriteAntiQuorum >= 0 &&
 		      r.satelliteTLogUsableDcs >= 1 &&
-		      (r.satelliteTLogReplicationFactor == 0 || (r.satelliteTLogPolicy && r.satellites.size())) &&
+		      (r.satelliteTLogReplicationFactor == 0 || (r.satelliteTLogPolicy && !r.satellites.empty())) &&
 		      (r.satelliteTLogUsableDcsFallback == 0 ||
 		       (r.satelliteTLogReplicationFactor > 0 && r.satelliteTLogReplicationFactorFallback > 0)))) {
 			return false;
@@ -257,7 +284,7 @@ bool DatabaseConfiguration::isValid() const {
 		satelliteDcIds.insert(Key());
 		satelliteDcIds.insert(r.dcId);
 		for (auto& s : r.satellites) {
-			if (satelliteDcIds.count(s.dcId)) {
+			if (satelliteDcIds.contains(s.dcId)) {
 				return false;
 			}
 			satelliteDcIds.insert(s.dcId);
@@ -340,7 +367,7 @@ StatusObject DatabaseConfiguration::toJSON(bool noPolicies) const {
 	}
 	result["usable_regions"] = usableRegions;
 
-	if (regions.size()) {
+	if (!regions.empty()) {
 		result["regions"] = getRegionJSON();
 	}
 
@@ -394,6 +421,7 @@ StatusObject DatabaseConfiguration::toJSON(bool noPolicies) const {
 	}
 
 	result["backup_worker_enabled"] = (int32_t)backupWorkerEnabled;
+	result["range_backup_worker_enabled"] = (int32_t)rangeBackupWorkerEnabled;
 	result["perpetual_storage_wiggle"] = perpetualStorageWiggleSpeed;
 	result["perpetual_storage_wiggle_locality"] = perpetualStorageWiggleLocality;
 	if (perpetualStoreType.storeType() != KeyValueStoreType::END) {
@@ -506,7 +534,7 @@ StatusArray DatabaseConfiguration::getRegionJSON() const {
 			regionObj["satellite_logs"] = r.satelliteDesiredTLogCount;
 		}
 
-		if (r.satellites.size()) {
+		if (!r.satellites.empty()) {
 			for (auto& s : r.satellites) {
 				StatusObject satObj;
 				satObj["id"] = s.dcId.toString();
@@ -664,6 +692,9 @@ bool DatabaseConfiguration::setInternal(KeyRef key, ValueRef value) {
 	} else if (ck == "backup_worker_enabled"_sr) {
 		parse((&type), value);
 		backupWorkerEnabled = (type != 0);
+	} else if (ck == "range_backup_worker_enabled"_sr) {
+		parse((&type), value);
+		rangeBackupWorkerEnabled = (type != 0);
 	} else if (ck == "usable_regions"_sr) {
 		parse(&usableRegions, value);
 	} else if (ck == "repopulate_anti_quorum"_sr) {

@@ -32,7 +32,8 @@
 #include "flow/DeterministicRandom.h"
 #include "flow/Error.h"
 #include "flow/Hostname.h"
-#include "flow/rte_memcpy.h"
+#include "flow/Util.h"
+#include "rte_memcpy.h"
 #include "flow/UnitTest.h"
 
 #ifdef WITH_FOLLY_MEMCPY
@@ -107,9 +108,9 @@ Reference<IRandom> seededDebugRandom;
 uint64_t debug_lastLoadBalanceResultEndpointToken = 0;
 bool noUnseed = false;
 
-void setThreadLocalDeterministicRandomSeed(uint32_t seed) {
-	seededRandom = Reference<IRandom>(new DeterministicRandom(seed, true));
-	seededDebugRandom = Reference<IRandom>(new DeterministicRandom(seed));
+void setThreadLocalDeterministicRandomSeed(uint64_t seed) {
+	seededRandom = makeReference<DeterministicRandom>(seed, true);
+	seededDebugRandom = makeReference<DeterministicRandom>(seed);
 }
 
 Reference<IRandom> debugRandom() {
@@ -118,7 +119,7 @@ Reference<IRandom> debugRandom() {
 
 Reference<IRandom> deterministicRandom() {
 	if (!seededRandom) {
-		seededRandom = Reference<IRandom>(new DeterministicRandom(platform::getRandomSeed(), true));
+		seededRandom = makeReference<DeterministicRandom>(platform::getRandomSeed(), true);
 	}
 	return seededRandom;
 }
@@ -126,7 +127,7 @@ Reference<IRandom> deterministicRandom() {
 Reference<IRandom> nondeterministicRandom() {
 	static thread_local Reference<IRandom> random;
 	if (!random) {
-		random = Reference<IRandom>(new DeterministicRandom(platform::getRandomSeed()));
+		random = makeReference<DeterministicRandom>(platform::getRandomSeed());
 	}
 	return random;
 }
@@ -148,9 +149,17 @@ UID UID::fromStringThrowsOnFailure(std::string const& s) {
 		// invalid string size
 		throw operation_failed();
 	}
-	uint64_t a = 0, b = 0;
-	int r = sscanf(s.c_str(), "%16" SCNx64 "%16" SCNx64, &a, &b);
-	if (r != 2) {
+	// Split into two 16-character hex strings and parse using strtoull
+	std::string first_half = s.substr(0, 16);
+	std::string second_half = s.substr(16, 16);
+
+	char* end1;
+	char* end2;
+	uint64_t a = strtoull(first_half.c_str(), &end1, 16);
+	uint64_t b = strtoull(second_half.c_str(), &end2, 16);
+
+	// Verify entire strings were parsed
+	if (end1 != first_half.c_str() + 16 || end2 != second_half.c_str() + 16) {
 		throw operation_failed();
 	}
 	return UID(a, b);
@@ -439,7 +448,7 @@ struct Int {
 	constexpr static FileIdentifier file_identifier = 12345;
 	uint32_t value;
 	Int() = default;
-	Int(uint32_t value) : value(value) {}
+	explicit Int(uint32_t value) : value(value) {}
 	template <class Ar>
 	void serialize(Ar& ar) {
 		serializer(ar, value);
@@ -700,6 +709,60 @@ TEST_CASE("/flow/ErrorOr/Map") {
 	ptr = new TestErrorOrMapClass("test_string"_sr, transaction_too_old());
 	checkErrorOr<true>(ErrorOr<TestErrorOrMapClass*>(ptr));
 	delete ptr;
+
+	return Void();
+}
+
+TEST_CASE("/flow/Util/formatBytesHumanReadable") {
+	// Test TB
+	ASSERT(formatBytesHumanReadable(1099511627776LL) == "1.00 TB");
+	ASSERT(formatBytesHumanReadable(2199023255552LL) == "2.00 TB");
+	ASSERT(formatBytesHumanReadable(1649267441664LL) == "1.50 TB");
+
+	// Test GB
+	ASSERT(formatBytesHumanReadable(1073741824LL) == "1.00 GB");
+	ASSERT(formatBytesHumanReadable(2147483648LL) == "2.00 GB");
+	ASSERT(formatBytesHumanReadable(536870912LL + 1073741824LL) == "1.50 GB");
+
+	// Test MB
+	ASSERT(formatBytesHumanReadable(1048576LL) == "1.00 MB");
+	ASSERT(formatBytesHumanReadable(10485760LL) == "10.00 MB");
+	ASSERT(formatBytesHumanReadable(1572864LL) == "1.50 MB");
+
+	// Test KB
+	ASSERT(formatBytesHumanReadable(1024LL) == "1.00 KB");
+	ASSERT(formatBytesHumanReadable(10240LL) == "10.00 KB");
+	ASSERT(formatBytesHumanReadable(1536LL) == "1.50 KB");
+
+	// Test bytes
+	ASSERT(formatBytesHumanReadable(0LL) == "0 bytes");
+	ASSERT(formatBytesHumanReadable(1LL) == "1 bytes");
+	ASSERT(formatBytesHumanReadable(512LL) == "512 bytes");
+	ASSERT(formatBytesHumanReadable(1023LL) == "1023 bytes");
+
+	return Void();
+}
+
+TEST_CASE("/flow/Util/formatDurationHumanReadable") {
+	// Test hours and minutes
+	ASSERT(formatDurationHumanReadable(3600) == "1 hours");
+	ASSERT(formatDurationHumanReadable(7200) == "2 hours");
+	ASSERT(formatDurationHumanReadable(3660) == "1 hours 1 minutes");
+	ASSERT(formatDurationHumanReadable(3720) == "1 hours 2 minutes");
+	ASSERT(formatDurationHumanReadable(5400) == "1 hours 30 minutes");
+	ASSERT(formatDurationHumanReadable(9000) == "2 hours 30 minutes");
+
+	// Test minutes only
+	ASSERT(formatDurationHumanReadable(60) == "1 minutes");
+	ASSERT(formatDurationHumanReadable(120) == "2 minutes");
+	ASSERT(formatDurationHumanReadable(300) == "5 minutes");
+	ASSERT(formatDurationHumanReadable(3540) == "59 minutes");
+
+	// Test seconds only
+	ASSERT(formatDurationHumanReadable(0) == "0 seconds");
+	ASSERT(formatDurationHumanReadable(1) == "1 seconds");
+	ASSERT(formatDurationHumanReadable(30) == "30 seconds");
+	ASSERT(formatDurationHumanReadable(59) == "59 seconds");
 
 	return Void();
 }

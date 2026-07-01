@@ -20,7 +20,6 @@
 
 #include "flow/IThreadPool.h"
 
-#include <algorithm>
 // The ifndef's allow us to compile with pre-built boost.  Otherwise, we get
 // errors about double-defines.  As of this writing, the automatically downloaded
 // build of boost doesn't define these, but the pre-built version does.  (The old
@@ -76,10 +75,12 @@ class ThreadPool final : public IThreadPool, public ReferenceCounted<ThreadPool>
 
 	struct ActionWrapper {
 		PThreadAction action;
-		ActionWrapper(PThreadAction action) : action(action) {}
+		explicit ActionWrapper(PThreadAction action) : action(action) {}
 		// HACK: Boost won't use move constructors, so we just assume the last copy made is the one that will be called
 		// or cancelled
-		ActionWrapper(ActionWrapper const& r) : action(r.action) { const_cast<ActionWrapper&>(r).action = nullptr; }
+		explicit(false) ActionWrapper(ActionWrapper const& r) : action(r.action) {
+			const_cast<ActionWrapper&>(r).action = nullptr;
+		}
 		void operator()() {
 			Thread::dispatch(action);
 			action = nullptr;
@@ -94,7 +95,7 @@ class ThreadPool final : public IThreadPool, public ReferenceCounted<ThreadPool>
 
 public:
 	ThreadPool(int stackSize, int pri) : dontstop(ios), mode(Run), stackSize(stackSize), pri(pri) {}
-	~ThreadPool() override {}
+	~ThreadPool() override = default;
 	Future<Void> stop(Error const& e = success()) override {
 		if (mode == Shutdown)
 			return Void();
@@ -137,7 +138,7 @@ public:
 };
 
 Reference<IThreadPool> createGenericThreadPool(int stackSize, int pri) {
-	return Reference<IThreadPool>(new ThreadPool(stackSize, pri));
+	return makeReference<ThreadPool>(stackSize, pri);
 }
 
 thread_local IThreadPoolReceiver* ThreadPool::Thread::threadUserObject;

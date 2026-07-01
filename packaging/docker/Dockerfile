@@ -60,7 +60,7 @@ RUN curl -Ls "https://github.com/krallin/tini/releases/download/v0.19.0/tini-$TA
 
 WORKDIR /
 
-FROM golang:1.24.9-bookworm AS go-build
+FROM golang:1.25.8-bookworm AS go-build
 COPY fdbkubernetesmonitor/ /fdbkubernetesmonitor
 WORKDIR /fdbkubernetesmonitor
 RUN go build -o /fdb-kubernetes-monitor *.go
@@ -133,7 +133,7 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     $CURL $FDB_WEBSITE/$FDB_VERSION/libfdb_c.${FDB_ARCH}.so -o /usr/lib/libfdb_c.so
 
 # Setup all symlinks for the other binaries that are a copy of fdbbackup
-RUN for file in fdbdr fdbrestore backup_agent dr_agent fastrestore_tool; do \
+RUN for file in fdbdr fdbrestore backup_agent dr_agent; do \
         ln -s /usr/bin/fdbbackup "/usr/bin/$file"; \
     done && \
     cd / && \
@@ -200,6 +200,31 @@ ENV FDB_COORDINATOR_PORT=4500
 ENV FDB_CLUSTER_FILE_CONTENTS=""
 ENV FDB_PROCESS_CLASS=unset
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/var/fdb/scripts/fdb.bash"]
+
+FROM foundationdb-base AS mako
+
+ARG FDB_VERSION=7.3.63
+ARG TARGETARCH
+COPY website/${FDB_VERSION}/mako.* /tmp/
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+        FDB_ARCH=x86_64; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        FDB_ARCH=aarch64; \
+    else \
+        echo "ERROR: unsupported architecture $TARGETARCH" 1>&2; \
+        exit 1; \
+    fi; \
+    cp "/tmp/mako.${FDB_ARCH}" /usr/bin/mako && \
+    chmod +x /usr/bin/mako && \
+    rm -rf /tmp/*
+
+RUN mkdir -p /var/log/fdb-trace-logs && \
+    chown -R fdb:fdb /var/log/fdb-trace-logs
+USER fdb
+WORKDIR /var/fdb
+ENV FDB_CLUSTER_FILE=/var/fdb/fdb.cluster
+ENV LD_LIBRARY_PATH=/var/dynamic-conf/lib/
+ENTRYPOINT ["/usr/bin/mako"]
 
 FROM foundationdb-base AS ycsb
 

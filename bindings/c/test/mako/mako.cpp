@@ -18,6 +18,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
@@ -38,6 +39,8 @@
 #include <string_view>
 #include <thread>
 
+#include "flow/BooleanParam.h"
+
 #include <fcntl.h>
 #include <getopt.h>
 #include <sys/mman.h>
@@ -45,8 +48,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <boost/asio.hpp>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -291,6 +292,9 @@ transaction_begin:
 			if (future_rc == FutureRC::ABORT) {
 				return -1;
 			}
+			setTransactionOptionsIfEnabled(args, tx);
+			if (token)
+				tx.setOption(FDB_TR_OPTION_AUTHORIZATION_TOKEN, *token);
 			// retry from first op
 			op_iter = getOpBegin(args);
 			needs_commit = false;
@@ -304,6 +308,7 @@ transaction_begin:
 				stats.addLatency(OP_COMMIT, step_latency);
 			}
 			tx.reset();
+			setTransactionOptionsIfEnabled(args, tx);
 			if (token)
 				tx.setOption(FDB_TR_OPTION_AUTHORIZATION_TOKEN, *token);
 			stats.incrOpCount(OP_COMMIT);
@@ -331,8 +336,9 @@ transaction_begin:
 		const auto rc = waitAndHandleError(tx, f, "COMMIT_AT_TX_END", args.isAnyTimeoutEnabled());
 		updateErrorStatsRunMode(stats, f.error(), OP_COMMIT);
 		watch_commit.stop();
-		auto tx_resetter = ExitGuard([&tx, &token]() {
+		auto tx_resetter = ExitGuard([&tx, &token, &args]() {
 			tx.reset();
+			setTransactionOptionsIfEnabled(args, tx);
 			if (token)
 				tx.setOption(FDB_TR_OPTION_AUTHORIZATION_TOKEN, *token);
 		});
@@ -418,7 +424,7 @@ int runWorkload(Database db,
 
 		if (current_tps > 0 || thread_tps == 0 /* throttling off */) {
 			auto [tx, token] = createNewTransaction(db, args, -1);
-			setTransactionTimeoutIfEnabled(args, tx);
+			setTransactionOptionsIfEnabled(args, tx);
 
 			/* enable transaction trace */
 			if (dotrace) {
@@ -541,7 +547,7 @@ void runAsyncWorkload(Arguments const& args,
 		while (shm.headerConst().signal.load() != SIGNAL_GREEN)
 			usleep(1000);
 		// launch [async_xacts] concurrent transactions
-		for (auto state : states)
+		for (const auto& state : states)
 			state->postNextTick();
 		while (stopcount.load() != args.async_xacts)
 			usleep(1000);
@@ -573,7 +579,7 @@ void runAsyncWorkload(Arguments const& args,
 		}
 		while (shm.headerConst().signal.load() != SIGNAL_GREEN)
 			usleep(1000);
-		for (auto state : states)
+		for (const auto& state : states)
 			state->postNextTick();
 		logr.debug("Launched {} concurrent transactions", states.size());
 		while (stopcount.load() != args.async_xacts)
@@ -787,6 +793,7 @@ Arguments::Arguments() {
 	load_factor = 1.0;
 	row_digits = digits(rows);
 	seconds = 0;
+	warmup_seconds = 0;
 	iteration = 0;
 	tpsmax = 0;
 	tpsmin = -1;
@@ -823,6 +830,7 @@ Arguments::Arguments() {
 	distributed_tracer_client = 0;
 	transaction_timeout_db = 0;
 	transaction_timeout_tx = 0;
+	max_grv_queue_delay_ms = -1;
 	num_report_files = 0;
 }
 
@@ -968,6 +976,9 @@ int parseTransaction(Arguments& args, char const* optarg) {
 		} else if (strncmp(ptr, "g", 1) == 0) {
 			op = OP_GET;
 			ptr++;
+		} else if (strncmp(ptr, "sj", 2) == 0) {
+			op = OP_STATUSJSON;
+			ptr += 2;
 		} else if (strncmp(ptr, "sgr", 3) == 0) {
 			op = OP_SGETRANGE;
 			rangeop = 1;
@@ -1084,6 +1095,9 @@ void usage() {
 	printf("%-24s %s\n", "-l, --load_factor=LOAD_FACTOR", "Specify load factor");
 	printf("%-24s %s\n", "-s, --seconds=SECONDS", "Specify the test duration in seconds\n");
 	printf("%-24s %s\n", "", "This option cannot be specified with --iteration.");
+	printf("%-24s %s\n",
+	       "    --warmup_seconds=SECONDS",
+	       "Ignore the initial SECONDS of a run when computing aggregate throughput and count-based totals");
 	printf("%-24s %s\n", "-i, --iteration=ITERS", "Specify the number of iterations.\n");
 	printf("%-24s %s\n", "", "This option cannot be specified with --seconds.");
 	printf("%-24s %s\n", "    --keylen=LENGTH", "Specify the key lengths");
@@ -1135,6 +1149,9 @@ void usage() {
 	printf("%-24s %s\n",
 	       "    --transaction_timeout_tx=DURATION",
 	       "Duration in milliseconds after which a transaction times out in run mode. Set as transaction option");
+	printf("%-24s %s\n",
+	       "    --max_grv_queue_delay=DURATION",
+	       "Maximum estimated GRV proxy queue delay in milliseconds. Set as transaction option in run mode.");
 }
 
 /* parse benchmark parameters */
@@ -1147,59 +1164,64 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 		static struct option long_options[] = {
 			/* name, has_arg, flag, val */
 			/* options requiring an argument */
-			{ "api_version", required_argument, NULL, 'a' },
-			{ "cluster", required_argument, NULL, 'c' },
-			{ "num_databases", required_argument, NULL, 'd' },
-			{ "procs", required_argument, NULL, 'p' },
-			{ "threads", required_argument, NULL, 't' },
-			{ "async_xacts", required_argument, NULL, ARG_ASYNC },
-			{ "rows", required_argument, NULL, 'r' },
-			{ "load_factor", required_argument, NULL, 'l' },
-			{ "seconds", required_argument, NULL, 's' },
-			{ "iteration", required_argument, NULL, 'i' },
-			{ "keylen", required_argument, NULL, ARG_KEYLEN },
-			{ "vallen", required_argument, NULL, ARG_VALLEN },
-			{ "transaction", required_argument, NULL, 'x' },
-			{ "tps", required_argument, NULL, ARG_TPS },
-			{ "tpsmax", required_argument, NULL, ARG_TPSMAX },
-			{ "tpsmin", required_argument, NULL, ARG_TPSMIN },
-			{ "tpsinterval", required_argument, NULL, ARG_TPSINTERVAL },
-			{ "tpschange", required_argument, NULL, ARG_TPSCHANGE },
-			{ "sampling", required_argument, NULL, ARG_SAMPLING },
-			{ "verbose", required_argument, NULL, 'v' },
-			{ "mode", required_argument, NULL, 'm' },
-			{ "knobs", required_argument, NULL, ARG_KNOBS },
-			{ "loggroup", required_argument, NULL, ARG_LOGGROUP },
-			{ "tracepath", required_argument, NULL, ARG_TRACEPATH },
-			{ "trace_format", required_argument, NULL, ARG_TRACEFORMAT },
-			{ "streaming", required_argument, NULL, ARG_STREAMING_MODE },
-			{ "txntrace", required_argument, NULL, ARG_TXNTRACE },
-			{ "txntagging", required_argument, NULL, ARG_TXNTAGGING },
-			{ "txntagging_prefix", required_argument, NULL, ARG_TXNTAGGINGPREFIX },
-			{ "client_threads_per_version", required_argument, NULL, ARG_CLIENT_THREADS_PER_VERSION },
-			{ "bg_file_path", required_argument, NULL, ARG_BG_FILE_PATH },
-			{ "distributed_tracer_client", required_argument, NULL, ARG_DISTRIBUTED_TRACER_CLIENT },
-			{ "tls_certificate_file", required_argument, NULL, ARG_TLS_CERTIFICATE_FILE },
-			{ "tls_key_file", required_argument, NULL, ARG_TLS_KEY_FILE },
-			{ "tls_ca_file", required_argument, NULL, ARG_TLS_CA_FILE },
-			{ "authorization_keypair_id", required_argument, NULL, ARG_AUTHORIZATION_KEYPAIR_ID },
-			{ "authorization_private_key_pem_file", required_argument, NULL, ARG_AUTHORIZATION_PRIVATE_KEY_PEM_FILE },
-			{ "transaction_timeout_tx", required_argument, NULL, ARG_TRANSACTION_TIMEOUT_TX },
-			{ "transaction_timeout_db", required_argument, NULL, ARG_TRANSACTION_TIMEOUT_DB },
+			{ "api_version", required_argument, nullptr, 'a' },
+			{ "cluster", required_argument, nullptr, 'c' },
+			{ "num_databases", required_argument, nullptr, 'd' },
+			{ "procs", required_argument, nullptr, 'p' },
+			{ "threads", required_argument, nullptr, 't' },
+			{ "async_xacts", required_argument, nullptr, ARG_ASYNC },
+			{ "rows", required_argument, nullptr, 'r' },
+			{ "load_factor", required_argument, nullptr, 'l' },
+			{ "seconds", required_argument, nullptr, 's' },
+			{ "warmup_seconds", required_argument, nullptr, ARG_WARMUP_SECONDS },
+			{ "iteration", required_argument, nullptr, 'i' },
+			{ "keylen", required_argument, nullptr, ARG_KEYLEN },
+			{ "vallen", required_argument, nullptr, ARG_VALLEN },
+			{ "transaction", required_argument, nullptr, 'x' },
+			{ "tps", required_argument, nullptr, ARG_TPS },
+			{ "tpsmax", required_argument, nullptr, ARG_TPSMAX },
+			{ "tpsmin", required_argument, nullptr, ARG_TPSMIN },
+			{ "tpsinterval", required_argument, nullptr, ARG_TPSINTERVAL },
+			{ "tpschange", required_argument, nullptr, ARG_TPSCHANGE },
+			{ "sampling", required_argument, nullptr, ARG_SAMPLING },
+			{ "verbose", required_argument, nullptr, 'v' },
+			{ "mode", required_argument, nullptr, 'm' },
+			{ "knobs", required_argument, nullptr, ARG_KNOBS },
+			{ "loggroup", required_argument, nullptr, ARG_LOGGROUP },
+			{ "tracepath", required_argument, nullptr, ARG_TRACEPATH },
+			{ "trace_format", required_argument, nullptr, ARG_TRACEFORMAT },
+			{ "streaming", required_argument, nullptr, ARG_STREAMING_MODE },
+			{ "txntrace", required_argument, nullptr, ARG_TXNTRACE },
+			{ "txntagging", required_argument, nullptr, ARG_TXNTAGGING },
+			{ "txntagging_prefix", required_argument, nullptr, ARG_TXNTAGGINGPREFIX },
+			{ "client_threads_per_version", required_argument, nullptr, ARG_CLIENT_THREADS_PER_VERSION },
+			{ "bg_file_path", required_argument, nullptr, ARG_BG_FILE_PATH },
+			{ "distributed_tracer_client", required_argument, nullptr, ARG_DISTRIBUTED_TRACER_CLIENT },
+			{ "tls_certificate_file", required_argument, nullptr, ARG_TLS_CERTIFICATE_FILE },
+			{ "tls_key_file", required_argument, nullptr, ARG_TLS_KEY_FILE },
+			{ "tls_ca_file", required_argument, nullptr, ARG_TLS_CA_FILE },
+			{ "authorization_keypair_id", required_argument, nullptr, ARG_AUTHORIZATION_KEYPAIR_ID },
+			{ "authorization_private_key_pem_file",
+			  required_argument,
+			  nullptr,
+			  ARG_AUTHORIZATION_PRIVATE_KEY_PEM_FILE },
+			{ "transaction_timeout_tx", required_argument, nullptr, ARG_TRANSACTION_TIMEOUT_TX },
+			{ "transaction_timeout_db", required_argument, nullptr, ARG_TRANSACTION_TIMEOUT_DB },
+			{ "max_grv_queue_delay", required_argument, nullptr, ARG_MAX_GRV_QUEUE_DELAY },
 			/* options which may or may not have an argument */
-			{ "json_report", optional_argument, NULL, ARG_JSON_REPORT },
-			{ "stats_export_path", optional_argument, NULL, ARG_EXPORT_PATH },
+			{ "json_report", optional_argument, nullptr, ARG_JSON_REPORT },
+			{ "stats_export_path", optional_argument, nullptr, ARG_EXPORT_PATH },
 			/* options without an argument */
-			{ "help", no_argument, NULL, 'h' },
-			{ "zipf", no_argument, NULL, 'z' },
-			{ "commitget", no_argument, NULL, ARG_COMMITGET },
-			{ "flatbuffers", no_argument, NULL, ARG_FLATBUFFERS },
-			{ "prefix_padding", no_argument, NULL, ARG_PREFIXPADDING },
-			{ "trace", no_argument, NULL, ARG_TRACE },
-			{ "version", no_argument, NULL, ARG_VERSION },
-			{ "disable_client_bypass", no_argument, NULL, ARG_DISABLE_CLIENT_BYPASS },
-			{ "disable_ryw", no_argument, NULL, ARG_DISABLE_RYW },
-			{ NULL, 0, NULL, 0 }
+			{ "help", no_argument, nullptr, 'h' },
+			{ "zipf", no_argument, nullptr, 'z' },
+			{ "commitget", no_argument, nullptr, ARG_COMMITGET },
+			{ "flatbuffers", no_argument, nullptr, ARG_FLATBUFFERS },
+			{ "prefix_padding", no_argument, nullptr, ARG_PREFIXPADDING },
+			{ "trace", no_argument, nullptr, ARG_TRACE },
+			{ "version", no_argument, nullptr, ARG_VERSION },
+			{ "disable_client_bypass", no_argument, nullptr, ARG_DISABLE_CLIENT_BYPASS },
+			{ "disable_ryw", no_argument, nullptr, ARG_DISABLE_RYW },
+			{ nullptr, 0, nullptr, 0 }
 		};
 
 /* For optional arguments, optarg is only set when the argument is passed as "--option=[ARGUMENT]" but not as
@@ -1228,9 +1250,9 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 		case 'c': {
 			const char delim[] = ",";
 			char* cluster_file = strtok(optarg, delim);
-			while (cluster_file != NULL) {
+			while (cluster_file != nullptr) {
 				strcpy(args.cluster_files[args.num_fdb_clusters++], cluster_file);
-				cluster_file = strtok(NULL, delim);
+				cluster_file = strtok(nullptr, delim);
 			}
 			break;
 		}
@@ -1276,8 +1298,7 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 				args.mode = MODE_RUN;
 			} else if (strcmp(optarg, "report") == 0) {
 				args.mode = MODE_REPORT;
-				int i = optind;
-				for (; i < argc; i++) {
+				for (int i = optind; i < argc; i++) {
 					if (argv[i][0] != '-') {
 						const std::string report_file = argv[i];
 						strncpy(args.report_files[args.num_report_files], report_file.c_str(), report_file.size());
@@ -1461,6 +1482,12 @@ int parseArguments(int argc, char* argv[], Arguments& args) {
 		case ARG_TRANSACTION_TIMEOUT_DB:
 			args.transaction_timeout_db = atoi(optarg);
 			break;
+		case ARG_MAX_GRV_QUEUE_DELAY:
+			args.max_grv_queue_delay_ms = atoi(optarg);
+			break;
+		case ARG_WARMUP_SECONDS:
+			args.warmup_seconds = atoi(optarg);
+			break;
 		}
 	}
 
@@ -1555,10 +1582,34 @@ int Arguments::validate() {
 			logr.error("--transaction_timeout_[tx|db] must be a non-negative integer");
 			return -1;
 		}
+		if (max_grv_queue_delay_ms < -1 || max_grv_queue_delay_ms == 0) {
+			logr.error("--max_grv_queue_delay must be a positive integer");
+			return -1;
+		}
+		if (warmup_seconds < 0) {
+			logr.error("--warmup_seconds must be a non-negative integer");
+			return -1;
+		}
+		if (warmup_seconds > 0 && iteration > 0) {
+			logr.error("--warmup_seconds is only supported with --seconds");
+			return -1;
+		}
+		if (seconds > 0 && warmup_seconds >= seconds) {
+			logr.error("--warmup_seconds must be smaller than --seconds");
+			return -1;
+		}
 	}
 
 	if (mode != MODE_RUN && (transaction_timeout_db != 0 || transaction_timeout_tx != 0)) {
 		logr.error("--transaction_timeout_[tx|db] only supported in run mode");
+		return -1;
+	}
+	if (mode != MODE_RUN && max_grv_queue_delay_ms != -1) {
+		logr.error("--max_grv_queue_delay only supported in run mode");
+		return -1;
+	}
+	if (mode != MODE_RUN && warmup_seconds != 0) {
+		logr.error("--warmup_seconds only supported in run mode");
 		return -1;
 	}
 
@@ -1654,7 +1705,37 @@ void printStats(Arguments const& args, WorkflowStatistics const* stats, double c
 	prev = current;
 }
 
-void printStatsHeader(Arguments const& args, bool show_commit, bool is_first_header_empty, bool show_op_stats) {
+WorkflowStatistics aggregateWorkerStats(Arguments const& args, WorkflowStatistics const* worker_stats) {
+	auto aggregate = WorkflowStatistics{};
+	const auto num_workers = args.async_xacts > 0 ? args.async_xacts : args.num_threads;
+	for (auto i = 0; i < args.num_processes * num_workers; i++) {
+		aggregate.combine(worker_stats[i]);
+	}
+	return aggregate;
+}
+
+struct WarmupSnapshot {
+	WorkflowStatistics worker_stats;
+	double duration_sec;
+};
+
+std::optional<WarmupSnapshot> maybeCaptureWarmupSnapshot(Arguments const& args,
+                                                         WorkflowStatistics const* worker_stats,
+                                                         double elapsed_sec) {
+	if (args.warmup_seconds == 0 || elapsed_sec < args.warmup_seconds) {
+		return std::nullopt;
+	}
+	return WarmupSnapshot{ aggregateWorkerStats(args, worker_stats), elapsed_sec };
+}
+
+FDB_BOOLEAN_PARAM(ShowCommit);
+FDB_BOOLEAN_PARAM(IsFirstHeaderEmpty);
+FDB_BOOLEAN_PARAM(ShowOpStats);
+
+void printStatsHeader(Arguments const& args,
+                      ShowCommit show_commit,
+                      IsFirstHeaderEmpty is_first_header_empty,
+                      ShowOpStats show_op_stats) {
 	/* header */
 	if (is_first_header_empty)
 		putTitle("");
@@ -1709,7 +1790,7 @@ void printWorkerStats(WorkflowStatistics& final_stats, Arguments args, FILE* fp,
 	}
 
 	fmt::print("Latency (us)");
-	printStatsHeader(args, true, false, true);
+	printStatsHeader(args, ShowCommit::True, IsFirstHeaderEmpty::False, ShowOpStats::True);
 
 	/* Total Samples */
 	putTitle("Samples");
@@ -1944,16 +2025,18 @@ void printReport(Arguments const& args,
                  WorkflowStatistics const* worker_stats,
                  ThreadStatistics const* thread_stats,
                  ProcessStatistics const* process_stats,
-                 double const duration_sec,
+                 double const run_duration_sec,
+                 std::optional<WarmupSnapshot> const& warmup_snapshot,
                  pid_t pid_main,
                  FILE* fp) {
 
-	auto final_worker_stats = WorkflowStatistics{};
-	const auto num_workers = args.async_xacts > 0 ? args.async_xacts : args.num_threads;
-
-	for (auto i = 0; i < args.num_processes * num_workers; i++) {
-		final_worker_stats.combine(worker_stats[i]);
+	auto final_worker_stats = aggregateWorkerStats(args, worker_stats);
+	auto measured_worker_stats = final_worker_stats;
+	if (warmup_snapshot.has_value()) {
+		measured_worker_stats.subtractCounters(warmup_snapshot->worker_stats);
 	}
+	const auto warmup_duration_sec = warmup_snapshot.has_value() ? warmup_snapshot->duration_sec : 0.0;
+	const auto measurement_duration_sec = std::max(run_duration_sec - warmup_duration_sec, 1e-9);
 
 	double cpu_time_worker_threads =
 	    std::accumulate(thread_stats,
@@ -2002,7 +2085,9 @@ void printReport(Arguments const& args,
 	    (total_duration_local_fdb_networks); // assume that external networks have same total duration as local networks
 
 	/* overall stats */
-	fmt::printf("\n====== Total Duration %6.3f sec ======\n\n", duration_sec);
+	fmt::printf("\n====== Measured Duration %6.3f sec ======\n\n", measurement_duration_sec);
+	fmt::printf("Run Duration:      %8.3f\n", run_duration_sec);
+	fmt::printf("Warmup Duration:   %8.3f\n", warmup_duration_sec);
 	fmt::printf("Total Processes:   %8d\n", args.num_processes);
 	fmt::printf("Total Threads:     %8d\n", args.num_threads);
 	fmt::printf("Total Async Xacts: %8d\n", args.async_xacts);
@@ -2025,30 +2110,36 @@ void printReport(Arguments const& args,
 			break;
 		}
 	}
-	const auto tps_f = final_worker_stats.getOpCount(OP_TRANSACTION) / duration_sec;
+	const auto tps_f = measured_worker_stats.getOpCount(OP_TRANSACTION) / measurement_duration_sec;
 	const auto tps_i = static_cast<uint64_t>(tps_f);
 
-	fmt::printf("Total Xacts:       %8lu\n", final_worker_stats.getOpCount(OP_TRANSACTION));
-	fmt::printf("Total Conflicts:   %8lu\n", final_worker_stats.getConflictCount());
-	fmt::printf("Total Errors:      %8lu\n", final_worker_stats.getTotalErrorCount());
-	fmt::printf("Total Timeouts:    %8lu\n", final_worker_stats.getTotalTimeoutCount());
+	fmt::printf("Total Xacts:       %8lu\n", measured_worker_stats.getOpCount(OP_TRANSACTION));
+	fmt::printf("Total Conflicts:   %8lu\n", measured_worker_stats.getConflictCount());
+	fmt::printf("Total Errors:      %8lu\n", measured_worker_stats.getTotalErrorCount());
+	fmt::printf("Total Timeouts:    %8lu\n", measured_worker_stats.getTotalTimeoutCount());
 	fmt::printf("Overall TPS:       %8lu\n\n", tps_i);
 	fmt::printf("%%CPU Worker Processes:         %6.2f \n", cpu_util_worker_processes);
 	fmt::printf("%%CPU Worker Threads:           %6.2f \n", cpu_util_worker_threads);
 	fmt::printf("%%CPU Local Network Threads:    %6.2f \n", cpu_util_local_fdb_networks);
 	fmt::printf("%%CPU External Network Threads: %6.2f \n\n", cpu_util_external_fdb_networks);
+	if (warmup_duration_sec > 0) {
+		fmt::printf(
+		    "Note: aggregate throughput and count-based totals exclude warmup; latency stats still include it.\n\n");
+	}
 
 	if (fp) {
 		fmt::fprintf(fp, "\"results\": {");
-		fmt::fprintf(fp, "\"totalDuration\": %6.3f,", duration_sec);
+		fmt::fprintf(fp, "\"runDuration\": %6.3f,", run_duration_sec);
+		fmt::fprintf(fp, "\"warmupDuration\": %6.3f,", warmup_duration_sec);
+		fmt::fprintf(fp, "\"totalDuration\": %6.3f,", measurement_duration_sec);
 		fmt::fprintf(fp, "\"totalProcesses\": %d,", args.num_processes);
 		fmt::fprintf(fp, "\"totalThreads\": %d,", args.num_threads);
 		fmt::fprintf(fp, "\"totalAsyncXacts\": %d,", args.async_xacts);
 		fmt::fprintf(fp, "\"targetTPS\": %d,", args.tpsmax);
-		fmt::fprintf(fp, "\"totalXacts\": %lu,", final_worker_stats.getOpCount(OP_TRANSACTION));
-		fmt::fprintf(fp, "\"totalConflicts\": %lu,", final_worker_stats.getConflictCount());
-		fmt::fprintf(fp, "\"totalErrors\": %lu,", final_worker_stats.getTotalErrorCount());
-		fmt::fprintf(fp, "\"totalTimeouts\": %lu,", final_worker_stats.getTotalTimeoutCount());
+		fmt::fprintf(fp, "\"totalXacts\": %lu,", measured_worker_stats.getOpCount(OP_TRANSACTION));
+		fmt::fprintf(fp, "\"totalConflicts\": %lu,", measured_worker_stats.getConflictCount());
+		fmt::fprintf(fp, "\"totalErrors\": %lu,", measured_worker_stats.getTotalErrorCount());
+		fmt::fprintf(fp, "\"totalTimeouts\": %lu,", measured_worker_stats.getTotalTimeoutCount());
 		fmt::fprintf(fp, "\"overallTPS\": %lu,", tps_i);
 		fmt::fprintf(fp, "\"workerProcesseCPU\": %.8f,", cpu_util_worker_processes);
 		fmt::fprintf(fp, "\"workerThreadCPU\": %.8f,", cpu_util_worker_threads);
@@ -2057,7 +2148,7 @@ void printReport(Arguments const& args,
 	}
 
 	/* per-op stats */
-	printStatsHeader(args, true, true, false);
+	printStatsHeader(args, ShowCommit::True, IsFirstHeaderEmpty::True, ShowOpStats::False);
 
 	/* OPS */
 	putTitle("Total OPS");
@@ -2067,24 +2158,24 @@ void printReport(Arguments const& args,
 	auto first_op = true;
 	for (auto op = 0; op < MAX_OP; op++) {
 		if ((args.txnspec.ops[op][OP_COUNT] > 0 && op != OP_TRANSACTION) || op == OP_COMMIT) {
-			putField(final_worker_stats.getOpCount(op));
+			putField(measured_worker_stats.getOpCount(op));
 			if (fp) {
 				if (first_op) {
 					first_op = false;
 				} else {
 					fmt::fprintf(fp, ",");
 				}
-				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), final_worker_stats.getOpCount(op));
+				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), measured_worker_stats.getOpCount(op));
 			}
 		}
 	}
 
 	/* TPS */
-	const auto tps = final_worker_stats.getOpCount(OP_TRANSACTION) / duration_sec;
+	const auto tps = measured_worker_stats.getOpCount(OP_TRANSACTION) / measurement_duration_sec;
 	putFieldFloat(tps, 2);
 
 	/* Conflicts */
-	const auto conflicts_rate = final_worker_stats.getConflictCount() / duration_sec;
+	const auto conflicts_rate = measured_worker_stats.getConflictCount() / measurement_duration_sec;
 	putFieldFloat(conflicts_rate, 2);
 	fmt::print("\n");
 
@@ -2097,14 +2188,14 @@ void printReport(Arguments const& args,
 	first_op = true;
 	for (auto op = 0; op < MAX_OP; op++) {
 		if ((args.txnspec.ops[op][OP_COUNT] > 0 && op != OP_TRANSACTION) || op == OP_COMMIT) {
-			putField(final_worker_stats.getErrorCount(op));
+			putField(measured_worker_stats.getErrorCount(op));
 			if (fp) {
 				if (first_op) {
 					first_op = false;
 				} else {
 					fmt::fprintf(fp, ",");
 				}
-				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), final_worker_stats.getErrorCount(op));
+				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), measured_worker_stats.getErrorCount(op));
 			}
 		}
 	}
@@ -2118,14 +2209,14 @@ void printReport(Arguments const& args,
 	first_op = true;
 	for (auto op = 0; op < MAX_OP; op++) {
 		if ((args.txnspec.ops[op][OP_COUNT] > 0 && op != OP_TRANSACTION) || op == OP_COMMIT) {
-			putField(final_worker_stats.getTimeoutCount(op));
+			putField(measured_worker_stats.getTimeoutCount(op));
 			if (fp) {
 				if (first_op) {
 					first_op = false;
 				} else {
 					fmt::fprintf(fp, ",");
 				}
-				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), final_worker_stats.getTimeoutCount(op));
+				fmt::fprintf(fp, "\"%s\": %lu", getOpName(op), measured_worker_stats.getTimeoutCount(op));
 			}
 		}
 	}
@@ -2176,6 +2267,7 @@ int statsProcessMain(Arguments const& args,
                      std::atomic<int> const& stopcount,
                      pid_t pid_main) {
 	bool first_stats = true;
+	auto warmup_snapshot = std::optional<WarmupSnapshot>{};
 
 	/* wait until the signal turn on */
 	while (signal.load() == SIGNAL_OFF) {
@@ -2183,9 +2275,9 @@ int statsProcessMain(Arguments const& args,
 	}
 
 	if (args.verbose >= VERBOSE_DEFAULT)
-		printStatsHeader(args, false, true, false);
+		printStatsHeader(args, ShowCommit::False, IsFirstHeaderEmpty::True, ShowOpStats::False);
 
-	FILE* fp = NULL;
+	FILE* fp = nullptr;
 	if (args.json_output_path[0] != '\0') {
 		fp = fopen(args.json_output_path, "w");
 		fmt::fprintf(fp, "{\"makoArgs\": {");
@@ -2198,6 +2290,7 @@ int statsProcessMain(Arguments const& args,
 		fmt::fprintf(fp, "\"rows\": %d,", args.rows);
 		fmt::fprintf(fp, "\"load_factor\": %lf,", args.load_factor);
 		fmt::fprintf(fp, "\"seconds\": %d,", args.seconds);
+		fmt::fprintf(fp, "\"warmup_seconds\": %d,", args.warmup_seconds);
 		fmt::fprintf(fp, "\"iteration\": %d,", args.iteration);
 		fmt::fprintf(fp, "\"tpsmax\": %d,", args.tpsmax);
 		fmt::fprintf(fp, "\"tpsmin\": %d,", args.tpsmin);
@@ -2223,6 +2316,7 @@ int statsProcessMain(Arguments const& args,
 		fmt::fprintf(fp, "\"disable_ryw\": %d,", args.disable_ryw);
 		fmt::fprintf(fp, "\"transaction_timeout_db\": %d,", args.transaction_timeout_db);
 		fmt::fprintf(fp, "\"transaction_timeout_tx\": %d,", args.transaction_timeout_tx);
+		fmt::fprintf(fp, "\"max_grv_queue_delay_ms\": %d,", args.max_grv_queue_delay_ms);
 		fmt::fprintf(fp, "\"json_output_path\": \"%s\"", args.json_output_path);
 		fmt::fprintf(fp, "},\"samples\": [");
 	}
@@ -2235,6 +2329,10 @@ int statsProcessMain(Arguments const& args,
 
 		/* print stats every (roughly) 1 sec */
 		if (toDoubleSeconds(time_now - time_prev) >= 1.0) {
+			if (!warmup_snapshot.has_value()) {
+				warmup_snapshot =
+				    maybeCaptureWarmupSnapshot(args, worker_stats, toDoubleSeconds(time_now - time_start));
+			}
 
 			/* adjust throttle rate if needed */
 			if (args.tpsmax != args.tpsmin) {
@@ -2290,11 +2388,14 @@ int statsProcessMain(Arguments const& args,
 	/* print report */
 	if (args.verbose >= VERBOSE_DEFAULT) {
 		auto time_now = steady_clock::now();
+		const auto run_duration_sec = toDoubleSeconds(time_now - time_start);
+		if (!warmup_snapshot.has_value()) {
+			warmup_snapshot = maybeCaptureWarmupSnapshot(args, worker_stats, run_duration_sec);
+		}
 		while (stopcount.load() < args.num_threads * args.num_processes) {
 			usleep(10000); /* 10ms */
 		}
-		printReport(
-		    args, worker_stats, thread_stats, process_stats, toDoubleSeconds(time_now - time_start), pid_main, fp);
+		printReport(args, worker_stats, thread_stats, process_stats, run_duration_sec, warmup_snapshot, pid_main, fp);
 	}
 
 	if (fp) {
@@ -2360,7 +2461,7 @@ int main(int argc, char* argv[]) {
 
 	if (args.mode == MODE_REPORT) {
 		WorkflowStatistics stats = mergeSketchReport(args);
-		printWorkerStats(stats, args, NULL, true);
+		printWorkerStats(stats, args, nullptr, true);
 		return 0;
 	}
 
@@ -2391,7 +2492,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	/* map it */
-	shm = mmap(NULL, shmsize, PROT_READ | PROT_WRITE, MAP_SHARED, shmfd, 0);
+	shm = mmap(nullptr, shmsize, PROT_READ | PROT_WRITE, MAP_SHARED, shmfd, 0);
 	if (shm == MAP_FAILED) {
 		logr.error("mmap (fd:{} size:{}) failed", shmfd, shmsize);
 		return -1;

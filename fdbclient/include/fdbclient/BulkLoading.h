@@ -23,8 +23,9 @@
 #include "flow/Error.h"
 #include "flow/IRandom.h"
 #include "flow/Platform.h"
-#include "flow/TDMetric.actor.h"
+#include "flow/TDMetric.h"
 #include "flow/Trace.h"
+#include "flow/Util.h"
 #include <cstdint>
 #include <string>
 #pragma once
@@ -188,7 +189,7 @@ public:
 		}
 	}
 
-	BulkLoadFileSet(const std::string& rootPath) : rootPath(rootPath) {
+	explicit BulkLoadFileSet(const std::string& rootPath) : rootPath(rootPath) {
 		if (rootPath.empty()) {
 			TraceEvent(SevError, "BulkLoadFileSetProvideInvalidPath")
 			    .suppressFor(10.0)
@@ -379,7 +380,7 @@ public:
 	// [ByteSampleOverhead]: 100, [ByteSampleMinimalProbability]: 0.500000, [loadType]: 1, [TransportMethod]: 1"
 	// To decode the string, we firstly split the string by ", ". Then, for each part, we remove "[*]: ". Finally, we
 	// convert the remain string for each part to the fields defined in the BulkLoadManifest.
-	BulkLoadManifest(const std::string& rawString) {
+	explicit BulkLoadManifest(const std::string& rawString) {
 		try {
 			std::vector<std::string> parts = splitString(rawString, ", ");
 			formatVersion = std::stoi(stringRemovePrefix(parts[0], "[FormatVersion]: "));
@@ -565,7 +566,7 @@ public:
 
 	BulkLoadManifestSet() = default;
 
-	BulkLoadManifestSet(int inputMaxCount) { maxCount = inputMaxCount; }
+	explicit BulkLoadManifestSet(int inputMaxCount) { maxCount = inputMaxCount; }
 
 	bool isValid() const {
 		if (maxCount == 0) {
@@ -866,7 +867,7 @@ public:
 		                  ", [JobRange]: " + jobRange.toString() +
 		                  ", [Phase]: " + convertBulkLoadJobPhaseToString(phase) +
 		                  ", [TransportMethod]: " + convertBulkLoadTransportMethodToString(transportMethod);
-		res = res + ", [SubmitTime]: " + std::to_string(submitTime);
+		res = res + ", [SubmitTime]: " + formatTimeISO8601(submitTime);
 		res = res + ", [SinceSubmitMins]: " + std::to_string((now() - submitTime) / 60.0);
 		if (taskCount.present()) {
 			res = res + ", [TaskCount]: " + std::to_string(taskCount.get());
@@ -964,7 +965,7 @@ public:
 	// "[FormatVersion]: 1, [ManifestCount]: 2"
 	// To decode the string, we firstly split the string by ", ". Then, for each part, we remove "[*]: ". Finally,
 	// we convert the remain string for each part to the fields defined in the BulkLoadJobManifestFileHeader.
-	BulkLoadJobManifestFileHeader(const std::string& rawString) {
+	explicit BulkLoadJobManifestFileHeader(const std::string& rawString) {
 		try {
 			std::vector<std::string> parts = splitString(rawString, ", ");
 			formatVersion = std::stoi(stringRemovePrefix(parts[0], "[FormatVersion]: "));
@@ -1016,7 +1017,7 @@ public:
 	// 50705947, [Bytes]: 6889" To decode the string, we firstly split the string by ", ". Then, for each part, we
 	// remove "[*]: ". Finally, we convert the remain string for each part to the fields defined in the
 	// BulkLoadJobFileManifestEntry.
-	BulkLoadJobFileManifestEntry(const std::string& rawString) {
+	explicit BulkLoadJobFileManifestEntry(const std::string& rawString) {
 		try {
 			std::vector<std::string> parts = splitString(rawString, ", ");
 			if (parts.size() != 5) {
@@ -1042,7 +1043,7 @@ public:
 	}
 
 	// Used when dumping
-	BulkLoadJobFileManifestEntry(const BulkLoadManifest& manifest)
+	explicit BulkLoadJobFileManifestEntry(const BulkLoadManifest& manifest)
 	  : beginKey(manifest.getBeginKey()), endKey(manifest.getEndKey()),
 	    manifestRelativePath(manifest.getManifestRelativePath()), version(manifest.getVersion()),
 	    bytes(manifest.getTotalBytes()) {
@@ -1093,7 +1094,7 @@ public:
 
 	SSBulkLoadMetadata() : dataMoveId(UID()), conductBulkLoad(false) {};
 
-	SSBulkLoadMetadata(const UID& dataMoveId) : dataMoveId(dataMoveId) {
+	explicit SSBulkLoadMetadata(const UID& dataMoveId) : dataMoveId(dataMoveId) {
 		conductBulkLoad = getConductBulkLoadFromDataMoveId(dataMoveId);
 		return;
 	}

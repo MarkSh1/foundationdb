@@ -23,7 +23,7 @@
 #pragma once
 
 #include "fdbclient/FDBTypes.h"
-#include "flow/TDMetric.actor.h"
+#include "flow/TDMetric.h"
 #include "flow/swift_support.h"
 #include <queue>
 
@@ -76,7 +76,7 @@ struct Notified {
 
 	void operator=(const ValueType& v) { set(v); }
 
-	Notified(Notified&& r) noexcept : waiting(std::move(r.waiting)), val(std::move(r.val)) {}
+	explicit(false) Notified(Notified&& r) noexcept : waiting(std::move(r.waiting)), val(std::move(r.val)) {}
 	void operator=(Notified&& r) noexcept {
 		waiting = std::move(r.waiting);
 		val = std::move(r.val);
