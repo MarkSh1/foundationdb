@@ -11,7 +11,7 @@ set -e
 FULL_VERSION="$1"
 DISTR_DIR="$(readlink -f ${2:-bld/linux/packages})"
 RPM_IMAGE=${3:-oraclelinux:8}
-DEB_IMAGE=${4:-debian:10}
+DEB_IMAGE=${4:-debian:11}
 
 CONTAINER_NAME="test_deploy"
 CONTAINER_DISTR_DIR="/mnt/distr"
@@ -105,11 +105,18 @@ remove_container_if_exists() {
 
 prepare_systemd_script() {
   case "$1" in
-    *debian:10*)
+      *debian:10*)
       cat <<'EOF'
 echo 'deb http://archive.debian.org/debian buster main' > /etc/apt/sources.list
 echo 'deb http://archive.debian.org/debian buster-updates main' >> /etc/apt/sources.list
 echo 'deb http://archive.debian.org/debian-security buster/updates main' >> /etc/apt/sources.list
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv dbus procps
+exec /lib/systemd/systemd
+EOF
+      ;;
+    *debian:11*)
+      cat <<'EOF'
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y systemd systemd-sysv dbus procps
 exec /lib/systemd/systemd
