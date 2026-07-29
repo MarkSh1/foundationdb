@@ -10,9 +10,9 @@ on:
         description: 'Run ID of the build workflow (find it in the URL of the build run)'
         required: true
       rpm_image:
-        description: 'RPM-based Linux image (default: oraclelinux:8)'
+        description: 'RPM-based Linux image (default: oraclelinux:9)'
         required: false
-        default: 'oraclelinux:8'
+        default: 'oraclelinux:9'
       deb_image:
         description: 'DEB-based Linux image (default: debian:11)'
         required: false
