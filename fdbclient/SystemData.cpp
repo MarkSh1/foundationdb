@@ -839,18 +839,18 @@ CDCStreamId decodeCDCStreamKey(KeyRef const& key) {
 	return streamId;
 }
 
-Value cdcStreamKeysValue(KeyRangeRef const& keys) {
+Value cdcStreamKeysValue(std::vector<KeyRange> const& ranges) {
 	BinaryWriter wr(IncludeVersion(ProtocolVersion::withNativeCdc()));
-	wr << keys;
+	wr << ranges;
 	return wr.toValue();
 }
 
-KeyRange decodeCDCStreamKeysValue(ValueRef const& value) {
-	KeyRange keys;
+std::vector<KeyRange> decodeCDCStreamKeysValue(ValueRef const& value) {
+	std::vector<KeyRange> ranges;
 	BinaryReader reader(value, IncludeVersion());
 	ASSERT_WE_THINK(reader.protocolVersion().hasNativeCdc());
-	reader >> keys;
-	return keys;
+	reader >> ranges;
+	return ranges;
 }
 
 static Key cdcTagHistoryPrefixFor(CDCStreamId streamId) {
@@ -883,6 +883,21 @@ CDCTagHistoryEntry decodeCDCTagHistoryKey(KeyRef const& key) {
 	BinaryReader reader(key.removePrefix(cdcTagHistoryKeys.begin), Unversioned());
 	reader >> streamId >> encodedVersion >> tag;
 	return CDCTagHistoryEntry(streamId, bigEndian64(encodedVersion), tag);
+}
+
+CDCTagHistoryEntry decodeCDCTagHistoryEntry(KeyRef const& key, ValueRef const& value) {
+	CDCTagHistoryEntry result = decodeCDCTagHistoryKey(key);
+	if (!value.empty()) {
+		if (value.size() != sizeof(Version) + sizeof(uint16_t)) {
+			throw serialization_failed();
+		}
+		const Version committedVersion = decodeCDCMinVersionValue(value);
+		if (committedVersion <= result.version) {
+			throw serialization_failed();
+		}
+		result.version = committedVersion;
+	}
+	return result;
 }
 
 Key cdcTagOwnerKeyFor(Tag tag) {
@@ -1944,7 +1959,7 @@ TEST_CASE("noSim/SystemData/DataMoveId") {
 TEST_CASE("/SystemData/NativeCDC") {
 	const Key name = "orders"_sr;
 	const CDCStreamId streamId = 42;
-	const KeyRange keys(KeyRangeRef("a"_sr, "z"_sr));
+	const std::vector<KeyRange> ranges{ KeyRangeRef("a"_sr, "c"_sr), KeyRangeRef("x"_sr, "z"_sr) };
 	const Version minVersion = 123456789;
 	const Tag tag(tagLocalityCDC, 9);
 	const UID proxyId(1, 2);
@@ -1953,7 +1968,7 @@ TEST_CASE("/SystemData/NativeCDC") {
 	ASSERT_EQ(decodeCDCStreamNameValue(cdcStreamNameValue(streamId)), streamId);
 	ASSERT_EQ(decodeCDCMaxStreamIdValue(cdcMaxStreamIdValue(streamId)), streamId);
 	ASSERT_EQ(decodeCDCStreamKey(cdcStreamKeyFor(streamId)), streamId);
-	ASSERT_EQ(decodeCDCStreamKeysValue(cdcStreamKeysValue(keys)), keys);
+	ASSERT(decodeCDCStreamKeysValue(cdcStreamKeysValue(ranges)) == ranges);
 	const Key tagOwnerKey = cdcTagOwnerKeyFor(tag);
 	ASSERT_EQ(decodeCDCTagOwnerKey(tagOwnerKey), tag);
 	ASSERT(cdcTagOwnerKeys.contains(tagOwnerKey));
@@ -1981,6 +1996,20 @@ TEST_CASE("/SystemData/NativeCDC") {
 	const Key laterTagHistoryKey = cdcTagHistoryKeyFor(streamId, 256, Tag(tagLocalityCDC, 0));
 	ASSERT(earlierTagHistoryKey < laterTagHistoryKey);
 	ASSERT(cdcTagHistoryRangeFor(streamId).contains(laterTagHistoryKey));
+	ASSERT_EQ(decodeCDCTagHistoryEntry(tagHistoryKey, ValueRef()).version, minVersion);
+	const Value committedBoundary = BinaryWriter::toValue(Versionstamp(minVersion + 20, 3), Unversioned());
+	const CDCTagHistoryEntry committedHistory = decodeCDCTagHistoryEntry(tagHistoryKey, committedBoundary);
+	ASSERT_EQ(committedHistory.version, minVersion + 20);
+	ASSERT_EQ(committedHistory.tag, tag);
+	ASSERT_EQ(committedHistory.streamId, streamId);
+	bool invalidBoundaryRejected = false;
+	try {
+		decodeCDCTagHistoryEntry(tagHistoryKey, BinaryWriter::toValue(Versionstamp(minVersion, 0), Unversioned()));
+	} catch (Error& e) {
+		ASSERT_EQ(e.code(), error_code_serialization_failed);
+		invalidBoundaryRejected = true;
+	}
+	ASSERT(invalidBoundaryRejected);
 
 	const Value serializedTagHistory = ObjectWriter::toValue(decodedTagHistory, Unversioned());
 	const auto deserializedTagHistory =
